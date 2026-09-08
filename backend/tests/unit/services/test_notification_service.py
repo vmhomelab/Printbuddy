@@ -62,7 +62,7 @@ class TestNotificationService:
         printer_a = await printer_factory(name="Printer A")
         printer_b = await printer_factory(name="Printer B")
         printer_c = await printer_factory(name="Printer C")
-        all_provider = await notification_provider_factory(name="All Printers", printer_id=None)
+        await notification_provider_factory(name="All Printers", printer_id=None)
         selected_provider = await notification_provider_factory(name="Selected Printers", printer_id=None)
         other_provider = await notification_provider_factory(name="Other Printer", printer_id=None)
 
