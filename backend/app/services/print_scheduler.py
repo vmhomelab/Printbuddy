@@ -46,6 +46,10 @@ logger = logging.getLogger(__name__)
 # briefly in SLICING between PREPARE and RUNNING while parsing the g-code.
 _ACTIVE_PRINT_STATES: frozenset[str] = frozenset({"PREPARE", "SLICING", "RUNNING", "PAUSE"})
 
+# Bound repeated upload/start retries when the watchdog has to revert an item
+# whose print command never lands.
+DISPATCH_MAX_ATTEMPTS = 3
+
 # Filament type equivalence groups — types within the same group are
 # interchangeable on the printer side (Bambu Lab firmware treats them as compatible).
 _FILAMENT_TYPE_GROUPS: list[list[str]] = [
@@ -112,6 +116,8 @@ class PrintScheduler:
         self._running = True
         logger.info("Print scheduler started")
 
+        await self._clear_stale_dispatch_claims(at_startup=True)
+
         while self._running:
             try:
                 await self.check_queue()
@@ -124,6 +130,26 @@ class PrintScheduler:
         """Stop the scheduler."""
         self._running = False
         logger.info("Print scheduler stopped")
+
+    async def _clear_stale_dispatch_claims(self, *, at_startup: bool = False) -> None:
+        """Release dispatch claims left behind by a crashed scheduler process."""
+        async with async_session() as db:
+            result = await db.execute(
+                select(PrintQueueItem).where(
+                    PrintQueueItem.status == "pending",
+                    PrintQueueItem.dispatching_at.is_not(None),
+                )
+            )
+            items = list(result.scalars().all())
+            for item in items:
+                item.dispatching_at = None
+            if items:
+                await db.commit()
+                logger.warning(
+                    "Cleared %d stale queue dispatch claim(s)%s",
+                    len(items),
+                    " at startup" if at_startup else "",
+                )
 
     async def check_queue(self):
         """Check for prints ready to start."""
@@ -139,6 +165,7 @@ class PrintScheduler:
                 result = await db.execute(
                     select(PrintQueueItem)
                     .where(PrintQueueItem.status == "pending")
+                    .where(PrintQueueItem.dispatching_at.is_(None))
                     .order_by(
                         PrintQueueItem.printer_id,
                         PrintQueueItem.target_model,
@@ -151,6 +178,7 @@ class PrintScheduler:
                 result = await db.execute(
                     select(PrintQueueItem)
                     .where(PrintQueueItem.status == "pending")
+                    .where(PrintQueueItem.dispatching_at.is_(None))
                     .order_by(PrintQueueItem.printer_id, PrintQueueItem.position)
                 )
             items = list(result.scalars().all())
@@ -1778,6 +1806,8 @@ class PrintScheduler:
         if not prev_item:
             return True
 
+        if prev_item.gate_acknowledged:
+            return True
         return prev_item.status == "completed"
 
     async def _power_off_if_needed(self, db: AsyncSession, item: PrintQueueItem):
@@ -1837,6 +1867,12 @@ class PrintScheduler:
         since been swapped to one with enough material clears the flag here
         so the next scheduler tick dispatches it.
         """
+        if item.skip_filament_check:
+            if item.filament_short:
+                item.filament_short = False
+                await db.commit()
+            return False
+
         try:
             deficit = await compute_deficit_for_queue_item(db, item)
         except Exception as e:
@@ -2147,6 +2183,9 @@ class PrintScheduler:
             f"retry_enabled={ftp_retry_enabled}, retry_count={ftp_retry_count}, timeout={ftp_timeout}"
         )
 
+        item.dispatching_at = datetime.now(timezone.utc)
+        await db.commit()
+
         # Delete existing file if present (avoids 553 error on overwrite)
         try:
             logger.debug("Queue item %s: Deleting existing file %s if present...", item.id, remote_path)
@@ -2195,6 +2234,7 @@ class PrintScheduler:
             item.status = "failed"
             item.error_message = error_msg
             item.completed_at = datetime.now(timezone.utc)
+            item.dispatching_at = None
             await db.commit()
             logger.error(
                 f"Queue item {item.id}: FTP upload failed - printer={printer.name}, model={printer.model}, "
@@ -2272,6 +2312,8 @@ class PrintScheduler:
         )
 
         if started:
+            item.dispatching_at = None
+            await db.commit()
             logger.info("Queue item %s: Print started successfully - %s", item.id, filename)
 
             # Register the local 3MF in the cover-cache so /cover skips FTP
@@ -2350,6 +2392,7 @@ class PrintScheduler:
             item.status = "failed"
             item.error_message = "Failed to send print command to printer"
             item.completed_at = datetime.now(timezone.utc)
+            item.dispatching_at = None
             await db.commit()
             logger.error(
                 f"Queue item {item.id}: Failed to start print on {printer.name} ({printer.model}) - "
@@ -2448,8 +2491,18 @@ class PrintScheduler:
             item = await db.get(PrintQueueItem, queue_item_id)
             if not item or item.status != "printing":
                 return "already_moved_on"
-            item.status = "pending"
+            item.dispatch_attempts = (item.dispatch_attempts or 0) + 1
             item.started_at = None
+            item.dispatching_at = None
+            if item.dispatch_attempts >= DISPATCH_MAX_ATTEMPTS:
+                item.status = "failed"
+                item.completed_at = datetime.now(timezone.utc)
+                item.error_message = (
+                    f"Printer did not acknowledge start command after {DISPATCH_MAX_ATTEMPTS} dispatch attempts"
+                )
+                await db.commit()
+                return "gave_up"
+            item.status = "pending"
             await db.commit()
             return "reverted"
 
@@ -2470,6 +2523,15 @@ class PrintScheduler:
             # other path) already moved the item past 'printing', don't run the
             # MQTT session-recovery logic below — a forced reconnect on a healthy
             # session breaks ongoing prints on the same printer.
+            return
+
+        if revert_outcome == "gave_up":
+            logger.error(
+                "Queue item %s: printer %d did not acknowledge print start after %d attempts — marked failed",
+                queue_item_id,
+                printer_id,
+                DISPATCH_MAX_ATTEMPTS,
+            )
             return
 
         if revert_outcome == "reverted":

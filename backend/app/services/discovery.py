@@ -686,7 +686,268 @@ class TasmotaScanner:
         self._running = False
 
 
+@dataclass
+class DiscoveredMoonraker:
+    """Represents a discovered Moonraker / Klipper instance."""
+
+    serial: str
+    name: str
+    ip_address: str
+    api_url: str
+    needs_auth: bool = False
+    model: str | None = None
+    discovered_at: str | None = None
+
+    def to_dict(self) -> dict:
+        return {
+            "serial": self.serial,
+            "name": self.name,
+            "ip_address": self.ip_address,
+            "api_url": self.api_url,
+            "needs_auth": self.needs_auth,
+            "model": self.model,
+            "discovered_at": self.discovered_at,
+        }
+
+
+def _moonraker_serial_for_ip(ip: str) -> str:
+    """Build a synthetic serial matching printer schema conventions."""
+    from backend.app.schemas.printer import _synthetic_moonraker_serial
+
+    return _synthetic_moonraker_serial(ip)
+
+
+def _looks_like_moonraker_info(payload: object) -> bool:
+    """Return True if JSON looks like Moonraker ``server/info``.
+
+    Requires Klipper/Moonraker-specific fields so unrelated HTTP services
+    (file servers, reverse proxies, auth walls) are not treated as hits.
+    """
+    if not isinstance(payload, dict):
+        return False
+    data = payload.get("result") if isinstance(payload.get("result"), dict) else payload
+    if not isinstance(data, dict):
+        return False
+    # Prefer strong identifiers; avoid generic keys like api_version alone.
+    return any(key in data for key in ("klippy_state", "moonraker_version", "klippy_connected"))
+
+
+def parse_moonraker_scan_ports(raw: str | list[int] | None = None) -> list[int]:
+    """Parse Moonraker probe ports from request/env (default ``7125,80``).
+
+    Port 80 is included for Cosmos / Fluidd reverse-proxies that expose the
+    Moonraker API on the UI port. Hits still require Moonraker-shaped JSON, so
+    unrelated :80 services (e.g. copyparty auth walls) are not matched.
+    """
+    if isinstance(raw, list):
+        ports = [int(p) for p in raw if isinstance(p, int) or str(p).strip().isdigit()]
+    else:
+        value = raw if raw is not None else os.environ.get("DISCOVERY_MOONRAKER_PORTS", "7125,80")
+        ports = []
+        for part in str(value).split(","):
+            part = part.strip()
+            if not part:
+                continue
+            try:
+                port = int(part)
+            except ValueError:
+                logger.warning("Ignoring invalid DISCOVERY_MOONRAKER_PORTS entry: %s", part)
+                continue
+            if 1 <= port <= 65535:
+                ports.append(port)
+            else:
+                logger.warning("Ignoring out-of-range Moonraker scan port: %s", port)
+
+    # Preserve order, drop duplicates
+    seen: set[int] = set()
+    ordered: list[int] = []
+    for port in ports:
+        if port not in seen:
+            seen.add(port)
+            ordered.append(port)
+    return ordered or [7125, 80]
+
+
+def _moonraker_base_url_for_port(ip: str, port: int) -> str:
+    """Build a Moonraker base URL; omit ``:80`` so CosmOS/Fluidd URLs stay clean."""
+    if port == 80:
+        return f"http://{ip}"
+    return f"http://{ip}:{port}"
+
+
+class MoonrakerSubnetScanner:
+    """Scanner for discovering Moonraker instances via HTTP ``server/info``.
+
+    Probes configurable ports (default 7125 then 80). Only HTTP 200 responses
+    with Moonraker/Klipper-shaped JSON count as hits — bare 401/403 auth walls
+    on unrelated LAN services are ignored.
+    """
+
+    def __init__(self):
+        self._discovered: dict[str, DiscoveredMoonraker] = {}
+        self._running = False
+        self._scanned = 0
+        self._total = 0
+
+    @property
+    def is_running(self) -> bool:
+        return self._running
+
+    @property
+    def discovered_printers(self) -> list[DiscoveredMoonraker]:
+        return list(self._discovered.values())
+
+    @property
+    def progress(self) -> tuple[int, int]:
+        """Return (scanned, total) counts."""
+        return self._scanned, self._total
+
+    async def scan_subnet(
+        self,
+        subnet: str,
+        timeout: float = 1.0,
+        ports: list[int] | None = None,
+    ) -> list[DiscoveredMoonraker]:
+        """Scan a subnet for Moonraker HTTP APIs.
+
+        Args:
+            subnet: CIDR notation subnet (e.g., "192.168.1.0/24")
+            timeout: Connect timeout per host in seconds
+            ports: Ports to probe per host (default from DISCOVERY_MOONRAKER_PORTS)
+
+        Returns:
+            List of discovered Moonraker instances
+        """
+        if self._running:
+            return []
+
+        self._running = True
+        self._discovered.clear()
+        self._scanned = 0
+        probe_ports = parse_moonraker_scan_ports(ports)
+
+        try:
+            network = ipaddress.ip_network(subnet, strict=False)
+            hosts = list(network.hosts())
+            self._total = len(hosts)
+
+            if self._total > 1024:
+                logger.warning("Subnet %s has %s hosts, limiting to 1024", subnet, self._total)
+                self._total = 1024
+                hosts = hosts[:1024]
+
+            logger.info(
+                "Starting Moonraker subnet scan of %s (%s hosts, ports=%s)",
+                subnet,
+                self._total,
+                probe_ports,
+            )
+
+            batch_size = 50
+            for i in range(0, len(hosts), batch_size):
+                if not self._running:
+                    logger.info("Moonraker scan stopped by user")
+                    break
+
+                batch = hosts[i : i + batch_size]
+                tasks = [self._probe_host(str(ip), timeout, probe_ports) for ip in batch]
+                await asyncio.gather(*tasks, return_exceptions=True)
+                self._scanned = min(i + batch_size, len(hosts))
+
+            logger.info("Moonraker scan complete. Found %s instances.", len(self._discovered))
+            return self.discovered_printers
+
+        except ValueError as e:
+            logger.error("Invalid subnet format: %s", e)
+            return []
+        finally:
+            self._running = False
+
+    async def _probe_host(self, ip: str, timeout: float, ports: list[int]):
+        """Probe a single host for Moonraker on the configured ports."""
+        try:
+            # Extra room when multiple ports are tried per host.
+            await asyncio.wait_for(
+                self._do_probe(ip, timeout, ports),
+                timeout=max(timeout * (2 + len(ports)), 5.0),
+            )
+        except TimeoutError:
+            pass
+        except Exception:
+            pass
+
+    async def _do_probe(self, ip: str, timeout: float, ports: list[int]):
+        import httpx
+
+        client_timeout = httpx.Timeout(max(timeout * 2, 2.0), connect=timeout)
+
+        async with httpx.AsyncClient(timeout=client_timeout, follow_redirects=False) as client:
+            for port in ports:
+                base_url = _moonraker_base_url_for_port(ip, port)
+                url = f"{base_url}/server/info"
+                try:
+                    response = await client.get(url)
+                except (httpx.TimeoutException, httpx.ConnectError, httpx.NetworkError):
+                    continue
+                except Exception:
+                    continue
+
+                if response.status_code != 200:
+                    # Do not treat generic 401/403 as Moonraker — many LAN services
+                    # auth-wall unknown paths (copyparty, NAS UI, etc.).
+                    continue
+
+                try:
+                    payload = response.json()
+                except Exception:
+                    continue
+
+                if not _looks_like_moonraker_info(payload):
+                    continue
+
+                self._record_hit(ip, base_url, needs_auth=False, payload=payload)
+                return
+
+    def _record_hit(
+        self,
+        ip: str,
+        base_url: str,
+        *,
+        needs_auth: bool,
+        payload: object | None = None,
+    ):
+        if ip in self._discovered:
+            return
+
+        name = f"Moonraker ({ip})"
+        if isinstance(payload, dict):
+            data = payload.get("result") if isinstance(payload.get("result"), dict) else payload
+            if isinstance(data, dict):
+                hostname = data.get("hostname") or data.get("device_name")
+                if isinstance(hostname, str) and hostname.strip():
+                    name = hostname.strip()
+
+        printer = DiscoveredMoonraker(
+            serial=_moonraker_serial_for_ip(ip),
+            name=name,
+            ip_address=ip,
+            api_url=base_url,
+            needs_auth=needs_auth,
+            discovered_at=datetime.now(timezone.utc).isoformat(),
+        )
+        self._discovered[ip] = printer
+        if needs_auth:
+            logger.info("Discovered Moonraker at %s (requires auth)", ip)
+        else:
+            logger.info("Discovered Moonraker at %s (%s)", ip, base_url)
+
+    def stop(self):
+        """Stop the current scan."""
+        self._running = False
+
+
 # Global instances
 discovery_service = PrinterDiscoveryService()
 subnet_scanner = SubnetScanner()
 tasmota_scanner = TasmotaScanner()
+moonraker_subnet_scanner = MoonrakerSubnetScanner()

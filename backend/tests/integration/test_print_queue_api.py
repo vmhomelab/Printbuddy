@@ -657,9 +657,12 @@ class TestQueueStartEndpoint:
         body = response.json()
         assert body["manual_start"] is False
         assert body["filament_short"] is False
+        assert body["skip_filament_check"] is True
         # Helper not called on the bypass path — we trust the operator's
         # decision to print anyway.
         assert called_with == {}
+        await db_session.refresh(item)
+        assert item.skip_filament_check is True
 
 
 class TestQueueCancelEndpoint:

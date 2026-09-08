@@ -84,6 +84,15 @@ services:
       # Port Printbuddy runs on (default: 8000)
       # Usage: PORT=8080 docker compose up -d
       - PORT=${PORT:-8000}
+      # Extra CIDRs offered in Add Printer → subnet scan (comma-separated).
+      # Used for both Bambu and Moonraker/Klipper discovery. Use when printers
+      # live on a routed VLAN that is not a local host NIC address — e.g. host
+      # on 10.2.0.0/24, printers on 10.0.0.0/24. Requires network_mode: host
+      # and a working route from the host.
+      #- DISCOVERY_EXTRA_SUBNETS=10.0.0.0/24
+      # Moonraker subnet-scan ports (comma-separated). Default 7125,80 covers
+      # CosmOS / Fluidd reverse-proxies. Hits still require Moonraker JSON.
+      #- DISCOVERY_MOONRAKER_PORTS=7125,80
       # Virtual printer: Set to the Docker host's IP when using bridge mode (ports:).
       # Required for FTP passive mode to work behind NAT.
       # Example: VIRTUAL_PRINTER_PASV_ADDRESS=192.168.1.100

@@ -203,6 +203,44 @@ class TestAssignSpoolmanSlot:
 
     @pytest.mark.asyncio
     @pytest.mark.integration
+    async def test_assign_base_material_cf_subtype_configures_composite_material(
+        self, async_client: AsyncClient, slot_settings, test_printer, mock_client
+    ):
+        """Spoolman material=PLA + filament name=PLA CF must publish as PLA-CF."""
+        mock_client.get_spool.return_value = {
+            **SAMPLE_SPOOL,
+            "filament": {
+                **SAMPLE_SPOOL["filament"],
+                "name": "PLA CF",
+                "material": "PLA",
+                "vendor": {"id": 1, "name": "Generic"},
+            },
+        }
+
+        with (
+            patch("backend.app.api.routes.spoolman_inventory.printer_manager.get_client", return_value=mock_client),
+            patch("backend.app.api.routes.spoolman_inventory.printer_manager.get_status", return_value=None),
+        ):
+            response = await async_client.post(
+                "/api/v1/spoolman/inventory/slot-assignments",
+                json={
+                    "spoolman_spool_id": 10,
+                    "printer_id": test_printer.id,
+                    "ams_id": 0,
+                    "tray_id": 0,
+                },
+            )
+
+        assert response.status_code == 200, response.text
+        call_kwargs = mock_client.ams_set_filament_setting.call_args
+        assert call_kwargs.kwargs["tray_type"] == "PLA-CF"
+        assert call_kwargs.kwargs["tray_info_idx"] == "GFL98"
+        assert call_kwargs.kwargs["setting_id"] == ""
+        assert call_kwargs.kwargs["nozzle_temp_min"] == 210
+        assert call_kwargs.kwargs["nozzle_temp_max"] == 240
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
     async def test_loaded_spool_assignment_for_elegoo_sdcp_does_not_call_bambu_mqtt(
         self, async_client: AsyncClient, slot_settings, db_session, mock_client
     ):

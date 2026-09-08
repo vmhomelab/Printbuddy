@@ -43,7 +43,9 @@ from backend.app.schemas.spool_usage import SpoolUsageHistoryResponse
 from backend.app.utils.filament_ids import (
     GENERIC_FILAMENT_IDS,
     MATERIAL_TEMPS,
+    effective_bambu_material,
     filament_id_to_setting_id,
+    generic_bambu_filament_id,
     normalize_slicer_filament,
 )
 from backend.app.utils.tag_normalization import normalize_tag_uid, normalize_tray_uuid
@@ -110,7 +112,7 @@ async def apply_spool_to_slot_via_mqtt(
 
     state = printer_manager.get_status(printer_id)
 
-    tray_type = spool.material
+    tray_type = effective_bambu_material(spool.material, spool.subtype)
     tray_sub_brands = (
         f"{spool.brand} {spool.material} {spool.subtype}".strip()
         if spool.brand
@@ -184,12 +186,8 @@ async def apply_spool_to_slot_via_mqtt(
                         tray_info_idx = lp_filament_id
                         setting_id = filament_id_to_setting_id(lp_filament_id)
                     else:
-                        mat = (spool.material or lp.filament_type or "").upper().strip()
-                        tray_info_idx = (
-                            _GENERIC_FILAMENT_IDS.get(mat)
-                            or _GENERIC_FILAMENT_IDS.get(mat.split("-")[0].split(" ")[0])
-                            or ""
-                        )
+                        mat = spool.material or lp.filament_type or ""
+                        tray_info_idx = generic_bambu_filament_id(mat, spool.subtype)
                     if lp.name:
                         tray_sub_brands = lp.name.split("@")[0].strip()
             except (ValueError, TypeError):
@@ -237,12 +235,7 @@ async def apply_spool_to_slot_via_mqtt(
         ):
             tray_info_idx = current_tray_info_idx
         elif tray_type:
-            material = tray_type.upper().strip()
-            generic = (
-                _GENERIC_FILAMENT_IDS.get(material)
-                or _GENERIC_FILAMENT_IDS.get(material.split("-")[0].split(" ")[0])
-                or ""
-            )
+            generic = generic_bambu_filament_id(tray_type)
             if generic:
                 tray_info_idx = generic
 
@@ -254,7 +247,7 @@ async def apply_spool_to_slot_via_mqtt(
     if tray_info_idx and not setting_id:
         setting_id = filament_id_to_setting_id(tray_info_idx)
 
-    temp_min, temp_max = MATERIAL_TEMPS.get((spool.material or "").upper(), (200, 240))
+    temp_min, temp_max = MATERIAL_TEMPS.get(tray_type.upper(), (200, 240))
     if spool.nozzle_temp_min is not None:
         temp_min = spool.nozzle_temp_min
     if spool.nozzle_temp_max is not None:

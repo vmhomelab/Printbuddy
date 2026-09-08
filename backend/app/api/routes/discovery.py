@@ -3,8 +3,10 @@ Printer discovery API endpoints.
 
 Provides endpoints for discovering Bambu Lab printers on the local network.
 Supports both SSDP discovery (for native installs) and subnet scanning (for Docker).
+Also supports Moonraker/Klipper subnet scanning via HTTP ``server/info``.
 """
 
+import asyncio
 import logging
 
 from fastapi import APIRouter
@@ -16,9 +18,10 @@ from backend.app.models.user import User
 from backend.app.services.discovery import (
     discovery_service,
     is_running_in_docker,
+    moonraker_subnet_scanner,
     subnet_scanner,
 )
-from backend.app.services.network_utils import get_network_interfaces
+from backend.app.services.network_utils import get_discovery_subnets
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/discovery", tags=["discovery"])
@@ -36,6 +39,7 @@ class DiscoveryInfo(BaseModel):
     is_docker: bool
     ssdp_running: bool
     scan_running: bool
+    moonraker_scan_running: bool = False
     subnets: list[str] = []
 
 
@@ -44,6 +48,17 @@ class SubnetScanRequest(BaseModel):
 
     subnet: str  # CIDR notation, e.g., "192.168.1.0/24"
     timeout: float = 1.0  # Connection timeout per host
+
+
+class MoonrakerSubnetScanRequest(BaseModel):
+    """Request to scan a subnet for Moonraker instances."""
+
+    subnet: str  # CIDR notation, e.g., "192.168.1.0/24"
+    timeout: float = 1.0  # Connection timeout per host
+    # Ports to probe per host. Default is DISCOVERY_MOONRAKER_PORTS or 7125,80.
+    # Port 80 covers CosmOS / Fluidd reverse-proxies; hits still require
+    # Moonraker-shaped JSON so unrelated HTTP services are ignored.
+    ports: list[int] | None = None
 
 
 class SubnetScanStatus(BaseModel):
@@ -62,6 +77,8 @@ class DiscoveredPrinterResponse(BaseModel):
     ip_address: str
     model: str | None = None
     discovered_at: str | None = None
+    api_url: str | None = None
+    needs_auth: bool = False
 
 
 @router.get("/info", response_model=DiscoveryInfo)
@@ -69,12 +86,12 @@ async def get_discovery_info(
     _: User | None = RequirePermissionIfAuthEnabled(Permission.DISCOVERY_SCAN),
 ):
     """Get discovery environment info (Docker detection, etc.)."""
-    subnets = [iface["subnet"] for iface in get_network_interfaces()]
     return DiscoveryInfo(
         is_docker=is_running_in_docker(),
         ssdp_running=discovery_service.is_running,
         scan_running=subnet_scanner.is_running,
-        subnets=subnets,
+        moonraker_scan_running=moonraker_subnet_scanner.is_running,
+        subnets=get_discovery_subnets(),
     )
 
 
@@ -154,8 +171,6 @@ async def start_subnet_scan(
         request: Subnet to scan in CIDR notation (e.g., "192.168.1.0/24")
     """
     # Start scan in background
-    import asyncio
-
     asyncio.create_task(subnet_scanner.scan_subnet(request.subnet, request.timeout))
 
     # Return immediate status
@@ -192,3 +207,73 @@ async def stop_subnet_scan(
         scanned=scanned,
         total=total,
     )
+
+
+# Moonraker / Klipper subnet scanning
+
+
+@router.post("/moonraker/scan", response_model=SubnetScanStatus)
+async def start_moonraker_subnet_scan(
+    request: MoonrakerSubnetScanRequest,
+    _: User | None = RequirePermissionIfAuthEnabled(Permission.DISCOVERY_SCAN),
+):
+    """Start a subnet scan for Moonraker instances (HTTP ``server/info``)."""
+    asyncio.create_task(
+        moonraker_subnet_scanner.scan_subnet(
+            request.subnet,
+            request.timeout,
+            ports=request.ports,
+        )
+    )
+    scanned, total = moonraker_subnet_scanner.progress
+    return SubnetScanStatus(
+        running=moonraker_subnet_scanner.is_running,
+        scanned=scanned,
+        total=total,
+    )
+
+
+@router.get("/moonraker/scan/status", response_model=SubnetScanStatus)
+async def get_moonraker_scan_status(
+    _: User | None = RequirePermissionIfAuthEnabled(Permission.DISCOVERY_SCAN),
+):
+    """Get the current Moonraker subnet scan status."""
+    scanned, total = moonraker_subnet_scanner.progress
+    return SubnetScanStatus(
+        running=moonraker_subnet_scanner.is_running,
+        scanned=scanned,
+        total=total,
+    )
+
+
+@router.post("/moonraker/scan/stop", response_model=SubnetScanStatus)
+async def stop_moonraker_subnet_scan(
+    _: User | None = RequirePermissionIfAuthEnabled(Permission.DISCOVERY_SCAN),
+):
+    """Stop the current Moonraker subnet scan."""
+    moonraker_subnet_scanner.stop()
+    scanned, total = moonraker_subnet_scanner.progress
+    return SubnetScanStatus(
+        running=moonraker_subnet_scanner.is_running,
+        scanned=scanned,
+        total=total,
+    )
+
+
+@router.get("/moonraker/printers", response_model=list[DiscoveredPrinterResponse])
+async def get_discovered_moonraker_printers(
+    _: User | None = RequirePermissionIfAuthEnabled(Permission.DISCOVERY_SCAN),
+):
+    """Get Moonraker instances found by the latest subnet scan."""
+    return [
+        DiscoveredPrinterResponse(
+            serial=p.serial,
+            name=p.name,
+            ip_address=p.ip_address,
+            model=p.model,
+            discovered_at=p.discovered_at,
+            api_url=p.api_url,
+            needs_auth=p.needs_auth,
+        )
+        for p in moonraker_subnet_scanner.discovered_printers
+    ]

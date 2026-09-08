@@ -58,6 +58,7 @@ from backend.app.services.printer_manager import (
 )
 from backend.app.services.printer_providers.factory import create_printer_client, normalize_provider
 from backend.app.services.printer_providers.moonraker import create_moonraker_client
+from backend.app.utils.filament_ids import effective_bambu_material, generic_bambu_filament_id
 from backend.app.utils.http import build_content_disposition
 
 logger = logging.getLogger(__name__)
@@ -2543,6 +2544,8 @@ async def configure_ams_slot(
         f"[configure_ams_slot] setting_id={setting_id!r}, kprofile_filament_id={kprofile_filament_id!r}, kprofile_setting_id={kprofile_setting_id!r}"
     )
 
+    effective_tray_type = effective_bambu_material(tray_type, tray_sub_brands)
+
     # Get MQTT client for this printer
     client = printer_manager.get_client(printer_id)
     if not client:
@@ -2608,7 +2611,7 @@ async def configure_ams_slot(
             current_tray_info_idx
             and current_tray_info_idx not in _GENERIC_ID_VALUES
             and current_tray_type
-            and current_tray_type.upper() == tray_type.upper()
+            and current_tray_type.upper() == effective_tray_type.upper()
         ):
             logger.info(
                 "[configure_ams_slot] Reusing slot's existing tray_info_idx=%r (same material %r)",
@@ -2617,12 +2620,7 @@ async def configure_ams_slot(
             )
             effective_tray_info_idx = current_tray_info_idx
         elif tray_type:
-            material = tray_type.upper().strip()
-            generic = (
-                _GENERIC_FILAMENT_IDS.get(material)
-                or _GENERIC_FILAMENT_IDS.get(material.split("-")[0].split(" ")[0])
-                or ""
-            )
+            generic = generic_bambu_filament_id(effective_tray_type)
             if generic:
                 logger.info("[configure_ams_slot] Falling back to generic %r for material %r", generic, tray_type)
                 effective_tray_info_idx = generic
@@ -2672,7 +2670,7 @@ async def configure_ams_slot(
         ams_id=ams_id,
         tray_id=tray_id,
         tray_info_idx=effective_tray_info_idx,
-        tray_type=tray_type,
+        tray_type=effective_tray_type,
         tray_sub_brands=tray_sub_brands,
         tray_color=tray_color,
         nozzle_temp_min=nozzle_temp_min,
@@ -3312,7 +3310,10 @@ async def set_fan_speed(
     if not callable(set_fan_speed_method):
         raise HTTPException(400, "Fan speed control is not supported by this printer provider")
 
-    effective_speed = 100 if normalized_fan in {"chamber", "box", "box_fan"} and speed > 0 else speed
+    force_binary_chamber = getattr(printer, "provider", None) == "elegoo_sdcp"
+    effective_speed = (
+        100 if force_binary_chamber and normalized_fan in {"chamber", "box", "box_fan"} and speed > 0 else speed
+    )
     try:
         success = set_fan_speed_method(normalized_fan, effective_speed)
     except ValueError as exc:

@@ -53,8 +53,9 @@ from backend.app.services.spoolman import (
 )
 from backend.app.services.spoolman_tracking import get_fallback_spool_tag_for_slot
 from backend.app.utils.filament_ids import (
-    GENERIC_FILAMENT_IDS,
     MATERIAL_TEMPS,
+    effective_bambu_material,
+    generic_bambu_filament_id,
     normalize_slicer_filament,
 )
 
@@ -1326,26 +1327,24 @@ async def assign_spoolman_slot(
             printer_manager.get_client(body.printer_id) if _is_bambu_slot_configuration_provider(printer) else None
         )
         if mqtt_client:
-            tray_type = mapped.get("material") or ""
+            raw_material = mapped.get("material") or ""
             brand = mapped.get("brand") or ""
             subtype = mapped.get("subtype") or ""
+            tray_type = effective_bambu_material(raw_material, subtype)
+            display_material = raw_material or tray_type
             if brand:
-                tray_sub_brands = f"{brand} {tray_type} {subtype}".strip()
+                tray_sub_brands = f"{brand} {display_material} {subtype}".strip()
             elif subtype:
-                tray_sub_brands = f"{tray_type} {subtype}".strip()
+                tray_sub_brands = f"{display_material} {subtype}".strip()
             else:
-                tray_sub_brands = tray_type
+                tray_sub_brands = display_material
 
             tray_color = (mapped.get("rgba") or "808080FF").upper()
             if len(tray_color) == 6:
                 tray_color = tray_color + "FF"
 
             material_upper = tray_type.upper().strip()
-            tray_info_idx = (
-                GENERIC_FILAMENT_IDS.get(material_upper)
-                or GENERIC_FILAMENT_IDS.get(material_upper.split("-")[0].split(" ")[0])
-                or ""
-            )
+            tray_info_idx = generic_bambu_filament_id(material_upper)
             setting_id = ""
 
             temp_defaults = MATERIAL_TEMPS.get(material_upper, (200, 240))

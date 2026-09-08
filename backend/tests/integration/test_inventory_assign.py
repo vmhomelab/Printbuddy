@@ -207,6 +207,44 @@ class TestAssignSpoolTrayInfoIdx:
 
     @pytest.mark.asyncio
     @pytest.mark.integration
+    async def test_base_material_cf_subtype_configures_composite_material(
+        self, async_client: AsyncClient, printer_factory, spool_factory
+    ):
+        """PLA + CF subtype must publish as PLA-CF, not generic PLA.
+
+        Users often store third-party CF filaments as material=PLA and
+        subtype=CF.  Bambu AMS mapping compares against the printer-reported
+        tray_type, so downgrading that shape to plain PLA makes 3MFs sliced as
+        PLA-CF fail to map.
+        """
+        printer = await printer_factory(name="P1S")
+        spool = await spool_factory(slicer_filament=None, material="PLA", subtype="CF", brand="Generic")
+
+        mock_client = MagicMock()
+        mock_client.ams_set_filament_setting.return_value = True
+        mock_client.extrusion_cali_sel.return_value = True
+
+        status = _make_mock_status(ams_data=[{"id": 0, "tray": [{"id": 0, "tray_type": "PLA"}]}])
+
+        with patch("backend.app.services.printer_manager.printer_manager") as mock_pm:
+            mock_pm.get_client.return_value = mock_client
+            mock_pm.get_status.return_value = status
+
+            response = await async_client.post(
+                "/api/v1/inventory/assignments",
+                json={"spool_id": spool.id, "printer_id": printer.id, "ams_id": 0, "tray_id": 0},
+            )
+
+            assert response.status_code == 200
+            call_kwargs = mock_client.ams_set_filament_setting.call_args
+            assert call_kwargs.kwargs["tray_type"] == "PLA-CF"
+            assert call_kwargs.kwargs["tray_info_idx"] == "GFL98"
+            assert call_kwargs.kwargs["setting_id"] == "GFSL98"
+            assert call_kwargs.kwargs["nozzle_temp_min"] == 210
+            assert call_kwargs.kwargs["nozzle_temp_max"] == 240
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
     async def test_spool_pfus_falls_back_to_generic_over_slot_pfus(
         self, async_client: AsyncClient, printer_factory, spool_factory
     ):

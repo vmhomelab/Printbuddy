@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.models.notification import NotificationDigestQueue, NotificationLog, NotificationProvider
 from backend.app.models.notification_template import NotificationTemplate
+from backend.app.services.notify_live_activity_service import notify_live_activity_service
 
 logger = logging.getLogger(__name__)
 
@@ -181,6 +182,8 @@ class NotificationService:
                 return await self._send_webhook(config, title, message)
             elif provider_type == "homeassistant":
                 return await self._send_homeassistant(config, title, message, db=db)
+            elif provider_type == "notify":
+                return await self._send_notify(config, title, message, event_type="test")
             else:
                 return False, f"Unknown provider type: {provider_type}"
         except Exception as e:
@@ -624,6 +627,38 @@ class NotificationService:
         else:
             return False, f"HTTP {response.status_code}: {response.text[:200]}"
 
+    async def _send_notify(
+        self,
+        config: dict,
+        title: str,
+        message: str,
+        event_type: str | None = None,
+    ) -> tuple[bool, str]:
+        """Send a normal push notification via Notify."""
+        device_id = str(config.get("device_id", "")).strip()
+        device_token = str(config.get("device_token", "")).strip()
+        base_url = str(config.get("base_url") or "https://push.getnotifyapp.com").strip().rstrip("/")
+
+        if not device_id or not device_token:
+            return False, "Device ID and device token are required"
+
+        url = f"{base_url}/notify-json/{quote(device_id)}?token={quote(device_token)}"
+        payload = {
+            "title": title,
+            "text": message,
+            "groupType": event_type or "printbuddy",
+            "iconUrl": "https://raw.githubusercontent.com/vmhomelab/printbuddy/main/static/img/printbuddy_icon.png",
+        }
+
+        client = await self._get_client()
+        response = await client.post(url, json=payload, headers={"Content-Type": "application/json"})
+
+        if response.status_code in (200, 201, 202, 204):
+            return True, "Notification sent via Notify"
+        if response.status_code in (401, 403):
+            return False, "Notify authentication failed - check your device ID and token"
+        return False, f"HTTP {response.status_code}: {response.text[:200]}"
+
     async def _send_to_provider(
         self,
         provider: NotificationProvider,
@@ -661,6 +696,8 @@ class NotificationService:
                 )
             elif provider.provider_type == "homeassistant":
                 return await self._send_homeassistant(config, title, message, db=db)
+            elif provider.provider_type == "notify":
+                return await self._send_notify(config, title, message, event_type=event_type)
             else:
                 return False, f"Unknown provider type: {provider.provider_type}"
         except Exception as e:
@@ -696,7 +733,12 @@ class NotificationService:
 
         if printer_id is not None:
             query = query.where(
-                (NotificationProvider.printer_id.is_(None)) | (NotificationProvider.printer_id == printer_id)
+                (
+                    NotificationProvider.printer_id.is_(None)
+                    & ~NotificationProvider.printers.any()
+                )
+                | (NotificationProvider.printer_id == printer_id)
+                | NotificationProvider.printers.any(id=printer_id)
             )
 
         result = await db.execute(query)
@@ -817,6 +859,17 @@ class NotificationService:
             archive_data: Optional archive data with print_time_seconds from 3MF parsing
         """
         logger.info("on_print_start called for printer %s (%s)", printer_id, printer_name)
+        try:
+            await notify_live_activity_service.on_print_start(
+                db,
+                printer_id=printer_id,
+                printer_name=printer_name,
+                data=data,
+                archive_data=archive_data,
+            )
+        except Exception:
+            logger.exception("Notify Live Activity start hook failed for printer %s", printer_id)
+
         providers = await self._get_providers_for_event(db, "on_print_start", printer_id)
         if not providers:
             logger.info("No notification providers configured for print_start event on printer %s", printer_id)
@@ -909,6 +962,17 @@ class NotificationService:
             logger.warning("Unknown print status '%s', defaulting to on_print_complete", status)
             event_field = "on_print_complete"
             event_type = "print_complete"
+
+        try:
+            await notify_live_activity_service.on_print_end(
+                db,
+                printer_id=printer_id,
+                printer_name=printer_name,
+                status=status,
+                data=data,
+            )
+        except Exception:
+            logger.exception("Notify Live Activity end hook failed for printer %s", printer_id)
 
         providers = await self._get_providers_for_event(db, event_field, printer_id)
         if not providers:
@@ -1005,8 +1069,26 @@ class NotificationService:
         db: AsyncSession,
         remaining_time: int | None = None,
         image_data: bytes | None = None,
+        layer_num: int | None = None,
+        total_layers: int | None = None,
+        update_live_activity: bool = True,
     ):
         """Handle print progress milestone (25%, 50%, 75%)."""
+        if update_live_activity:
+            try:
+                await notify_live_activity_service.on_print_progress(
+                    db,
+                    printer_id=printer_id,
+                    printer_name=printer_name,
+                    filename=filename,
+                    progress=progress,
+                    remaining_time=remaining_time,
+                    layer_num=layer_num,
+                    total_layers=total_layers,
+                )
+            except Exception:
+                logger.exception("Notify Live Activity progress hook failed for printer %s", printer_id)
+
         providers = await self._get_providers_for_event(db, "on_print_progress", printer_id)
         if not providers:
             return
@@ -1043,8 +1125,24 @@ class NotificationService:
         remaining_time: int | None = None,
         image_data: bytes | None = None,
         finish_photo_url: str | None = None,
+        layer_num: int | None = None,
+        total_layers: int | None = None,
     ):
         """Handle 99% print almost-done milestone with a camera snapshot."""
+        try:
+            await notify_live_activity_service.on_print_progress(
+                db,
+                printer_id=printer_id,
+                printer_name=printer_name,
+                filename=filename,
+                progress=99,
+                remaining_time=remaining_time,
+                layer_num=layer_num,
+                total_layers=total_layers,
+            )
+        except Exception:
+            logger.exception("Notify Live Activity almost-done hook failed for printer %s", printer_id)
+
         providers = await self._get_providers_for_event(db, "on_print_almost_done", printer_id)
         if not providers:
             return

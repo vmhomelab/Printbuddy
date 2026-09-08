@@ -324,6 +324,7 @@ export interface AMSTray {
   drying_temp: number | null;      // RFID-recommended drying temp
   drying_time: number | null;      // RFID-recommended drying time (hours)
   state: number | null;            // AMS tray state: 9=empty, 10=spool present not loaded, 11=loaded
+  active?: boolean;                // Snapmaker U1 currently active feeder slot
   // Snapmaker U1 Moonraker feeder status. Generic AMS/CFS payloads omit these.
   loaded_to_feeder?: boolean;
   loaded_to_extruder?: boolean;
@@ -1893,6 +1894,7 @@ export interface PrintQueueItem {
   // any required slot's grams (#1496). Surfaced on the queue row as a
   // "filament short" badge; cleared on a successful ▶ click (live recheck).
   filament_short: boolean;
+  skip_filament_check: boolean;
   ams_mapping: number[] | null;  // AMS slot mapping for multi-color prints
   filament_overrides: Array<{ slot_id: number; type: string; color: string; color_name?: string; force_color_match?: boolean }> | null;  // Filament overrides for model-based assignment
   plate_id: number | null;  // Plate ID for multi-plate 3MF files
@@ -1960,6 +1962,7 @@ export interface PrintQueueItemCreate {
   require_previous_success?: boolean;
   auto_off_after?: boolean;
   manual_start?: boolean;  // Requires manual trigger to start (staged)
+  skip_filament_check?: boolean;
   ams_mapping?: number[] | null;  // AMS slot mapping for multi-color prints
   plate_id?: number | null;  // Plate ID for multi-plate 3MF files
   // Print options
@@ -2128,7 +2131,7 @@ export interface Filament {
 }
 
 // Notification Provider types
-export type ProviderType = 'callmebot' | 'ntfy' | 'pushover' | 'telegram' | 'email' | 'discord' | 'webhook' | 'homeassistant';
+export type ProviderType = 'callmebot' | 'ntfy' | 'pushover' | 'telegram' | 'email' | 'discord' | 'webhook' | 'homeassistant' | 'notify';
 
 export interface NotificationProvider {
   id: number;
@@ -2181,6 +2184,7 @@ export interface NotificationProvider {
   daily_digest_time: string | null;
   // Printer filter
   printer_id: number | null;
+  printer_ids: number[];
   // Status tracking
   last_success: string | null;
   last_error: string | null;
@@ -2240,6 +2244,7 @@ export interface NotificationProviderCreate {
   daily_digest_time?: string | null;
   // Printer filter
   printer_id?: number | null;
+  printer_ids?: number[];
 }
 
 export interface NotificationProviderUpdate {
@@ -2292,6 +2297,7 @@ export interface NotificationProviderUpdate {
   daily_digest_time?: string | null;
   // Printer filter
   printer_id?: number | null;
+  printer_ids?: number[];
 }
 
 // GitHub Backup types
@@ -6670,6 +6676,8 @@ export interface DiscoveredPrinter {
   ip_address: string;
   model: string | null;
   discovered_at: string | null;
+  api_url?: string | null;
+  needs_auth?: boolean;
 }
 
 export interface DiscoveryStatus {
@@ -6680,6 +6688,7 @@ export interface DiscoveryInfo {
   is_docker: boolean;
   ssdp_running: boolean;
   scan_running: boolean;
+  moonraker_scan_running?: boolean;
   subnets: string[];
 }
 
@@ -6715,6 +6724,22 @@ export const discoveryApi = {
 
   stopSubnetScan: () =>
     request<SubnetScanStatus>('/discovery/scan/stop', { method: 'POST' }),
+
+  // Moonraker / Klipper subnet scanning
+  startMoonrakerSubnetScan: (subnet: string, timeout: number = 1.0, ports?: number[]) =>
+    request<SubnetScanStatus>('/discovery/moonraker/scan', {
+      method: 'POST',
+      body: JSON.stringify({ subnet, timeout, ports }),
+    }),
+
+  getMoonrakerScanStatus: () =>
+    request<SubnetScanStatus>('/discovery/moonraker/scan/status'),
+
+  stopMoonrakerSubnetScan: () =>
+    request<SubnetScanStatus>('/discovery/moonraker/scan/stop', { method: 'POST' }),
+
+  getDiscoveredMoonrakerPrinters: () =>
+    request<DiscoveredPrinter[]>('/discovery/moonraker/printers'),
 };
 
 // Virtual Printer types

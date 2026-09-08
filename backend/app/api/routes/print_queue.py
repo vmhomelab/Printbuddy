@@ -199,6 +199,7 @@ def _enrich_response(item: PrintQueueItem) -> PrintQueueItemResponse:
         "auto_off_after": item.auto_off_after,
         "manual_start": item.manual_start,
         "filament_short": bool(item.filament_short),
+        "skip_filament_check": bool(item.skip_filament_check),
         "ams_mapping": ams_mapping_parsed,
         "plate_id": item.plate_id,
         "bed_levelling": item.bed_levelling,
@@ -573,6 +574,7 @@ async def add_to_queue(
             require_previous_success=data.require_previous_success,
             auto_off_after=data.auto_off_after,
             manual_start=data.manual_start,
+            skip_filament_check=data.skip_filament_check,
             ams_mapping=ams_mapping_json,
             plate_id=data.plate_id,
             bed_levelling=bed_levelling,
@@ -686,7 +688,7 @@ async def bulk_update_queue_items(
     skipped_count = 0
 
     for item in items:
-        if item.status != "pending":
+        if item.status != "pending" or item.dispatching_at is not None:
             skipped_count += 1
             continue
 
@@ -893,6 +895,30 @@ async def get_queue_item(
     return _enrich_response(item)
 
 
+@router.post("/resume-after-failure/{printer_id}")
+async def resume_queue_after_failure(
+    printer_id: int,
+    db: AsyncSession = Depends(get_db),
+    _: User | None = RequirePermissionIfAuthEnabled(Permission.QUEUE_UPDATE_ALL),
+):
+    """Acknowledge the latest failed/aborted queue row so gated items can continue."""
+    result = await db.execute(
+        select(PrintQueueItem)
+        .where(PrintQueueItem.printer_id == printer_id)
+        .where(PrintQueueItem.status.in_(["failed", "aborted"]))
+        .where(PrintQueueItem.gate_acknowledged == False)  # noqa: E712
+        .order_by(PrintQueueItem.completed_at.desc().nullslast(), PrintQueueItem.id.desc())
+        .limit(1)
+    )
+    item = result.scalar_one_or_none()
+    if not item:
+        raise HTTPException(404, "No failed queue item to acknowledge")
+    item.gate_acknowledged = True
+    await db.commit()
+    logger.info("Acknowledged failed queue gate item %s for printer %s", item.id, printer_id)
+    return {"message": "Queue failure acknowledged", "item_id": item.id}
+
+
 @router.patch("/{item_id}", response_model=PrintQueueItemResponse)
 async def update_queue_item(
     item_id: int,
@@ -920,6 +946,8 @@ async def update_queue_item(
 
     if item.status != "pending":
         raise HTTPException(400, "Can only update pending items")
+    if item.dispatching_at is not None:
+        raise HTTPException(409, "Queue item is currently dispatching")
 
     update_data = data.model_dump(exclude_unset=True)
 
@@ -997,6 +1025,8 @@ async def delete_queue_item(
 
     if item.status == "printing":
         raise HTTPException(400, "Cannot delete item that is currently printing")
+    if item.dispatching_at is not None:
+        raise HTTPException(409, "Queue item is currently dispatching")
 
     await db.delete(item)
     await db.commit()
@@ -1015,7 +1045,7 @@ async def reorder_queue(
     for reorder_item in data.items:
         result = await db.execute(select(PrintQueueItem).where(PrintQueueItem.id == reorder_item.id))
         item = result.scalar_one_or_none()
-        if item and item.status == "pending":
+        if item and item.status == "pending" and item.dispatching_at is None:
             item.position = reorder_item.position
 
     await db.commit()
@@ -1190,6 +1220,8 @@ async def start_queue_item(
     # Print Anyway / no deficit: clear the flags and let the scheduler dispatch.
     item.manual_start = False
     item.filament_short = False
+    if skip_filament_check:
+        item.skip_filament_check = True
     await db.commit()
     await db.refresh(item, ["archive", "printer", "library_file", "created_by", "batch"])
 

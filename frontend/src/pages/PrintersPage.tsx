@@ -21,6 +21,7 @@ import { CSS } from '@dnd-kit/utilities';
 import { compareFwVersions } from '../utils/firmwareVersion';
 import { formatPrintName } from '../utils/printName';
 import { computePopoverPosition } from '../utils/popoverPosition';
+import { PRINTER_MODEL_GROUPS, mapModelCode } from '../utils/printerModels';
 
 // AMS drying popover dimensions — w-[240px] on the popover, estimated height
 // covers header + filament select + temp slider + duration + rotate-tray
@@ -380,11 +381,6 @@ function formatKValue(k: number | null | undefined): string {
   return value.toFixed(3);
 }
 
-type PrinterModelOptionGroup = {
-  label: string;
-  options: Array<{ value: string; label: string }>;
-};
-
 function inferExternalCameraType(url: string): NonNullable<PrinterCreate['external_camera_type']> {
   const normalized = url.trim().toLowerCase();
   if (normalized.startsWith('rtsp://') || normalized.startsWith('rtsps://')) {
@@ -476,104 +472,6 @@ function isPrusaPrinter(printer: Pick<Printer, 'provider' | 'model'>): boolean {
   const model = printer.model?.toLowerCase() ?? '';
   return provider === 'prusalink' || provider === 'prusaconnect' || model.startsWith('prusa ');
 }
-
-const PRINTER_MODEL_GROUPS: PrinterModelOptionGroup[] = [
-  {
-    label: 'Bambu Lab',
-    options: [
-      { value: 'A1', label: 'A1' },
-      { value: 'A1 F', label: 'A1 F' },
-      { value: 'A1 Mini', label: 'A1 Mini' },
-      { value: 'O1C', label: 'O1C' },
-      { value: 'O1E', label: 'O1E' },
-      { value: 'O1S', label: 'O1S' },
-      { value: 'P1P', label: 'P1P' },
-      { value: 'P1S', label: 'P1S' },
-      { value: 'P2S', label: 'P2S' },
-      { value: 'X1', label: 'X1' },
-      { value: 'X1C', label: 'X1 Carbon' },
-      { value: 'X1E', label: 'X1E' },
-      { value: 'X2D', label: 'X2D' },
-      { value: 'H2C', label: 'H2C' },
-      { value: 'H2D', label: 'H2D' },
-      { value: 'H2D Pro', label: 'H2D Pro' },
-      { value: 'H2S', label: 'H2S' },
-    ],
-  },
-  {
-    label: 'Elegoo',
-    options: [
-      { value: 'Elegoo Neptune 3', label: 'Neptune 3' },
-      { value: 'Elegoo Neptune 3 Pro', label: 'Neptune 3 Pro' },
-      { value: 'Elegoo Neptune 3 Plus', label: 'Neptune 3 Plus' },
-      { value: 'Elegoo Neptune 3 Max', label: 'Neptune 3 Max' },
-      { value: 'Elegoo Neptune 4', label: 'Neptune 4' },
-      { value: 'Elegoo Neptune 4 Pro', label: 'Neptune 4 Pro' },
-      { value: 'Elegoo Neptune 4 Plus', label: 'Neptune 4 Plus' },
-      { value: 'Elegoo Neptune 4 Max', label: 'Neptune 4 Max' },
-      { value: 'Elegoo Centauri', label: 'Centauri' },
-      { value: 'Elegoo Centauri Carbon', label: 'Centauri Carbon' },
-    ],
-  },
-  {
-    label: 'Voron',
-    options: [
-      { value: 'Voron V0.2', label: 'V0.2' },
-      { value: 'Voron Trident', label: 'Trident' },
-      { value: 'Voron 2.4', label: '2.4' },
-      { value: 'Voron Switchwire', label: 'Switchwire' },
-      { value: 'Voron Legacy', label: 'Legacy' },
-    ],
-  },
-  {
-    label: 'Creality Klipper',
-    options: [
-      { value: 'Creality Ender-3', label: 'Ender-3' },
-      { value: 'Creality Ender-3 Pro', label: 'Ender-3 Pro' },
-      { value: 'Creality Ender-3 V2', label: 'Ender-3 V2' },
-      { value: 'Creality Ender-3 S1', label: 'Ender-3 S1' },
-      { value: 'Creality Ender-5 Plus', label: 'Ender-5 Plus' },
-      { value: 'Creality CR-10S Pro', label: 'CR-10S Pro' },
-      { value: 'Creality CR-10S Pro V2', label: 'CR-10S Pro V2' },
-      { value: 'Creality K1', label: 'K1' },
-      { value: 'Creality K1C', label: 'K1C' },
-      { value: 'Creality K2', label: 'K2' },
-      { value: 'Creality K2 Pro', label: 'K2 Pro' },
-      { value: 'Creality K2 Plus', label: 'K2 Plus' },
-    ],
-  },
-  {
-    label: 'Snapmaker Klipper',
-    options: [
-      { value: 'Snapmaker U1', label: 'U1' },
-    ],
-  },
-  {
-    label: 'Prusa',
-    options: [
-      { value: 'Prusa CORE One', label: 'CORE One' },
-      { value: 'Prusa MK4S', label: 'MK4S' },
-      { value: 'Prusa MK4', label: 'MK4' },
-      { value: 'Prusa MK3.9S', label: 'MK3.9S' },
-      { value: 'Prusa MK3.9', label: 'MK3.9' },
-      { value: 'Prusa MK3.5S', label: 'MK3.5S' },
-      { value: 'Prusa MK3.5', label: 'MK3.5' },
-      { value: 'Prusa XL', label: 'XL' },
-      { value: 'Prusa MINI+', label: 'MINI+' },
-      { value: 'Prusa MK3S+', label: 'MK3S+' },
-      { value: 'Prusa SL1S SPEED', label: 'SL1S SPEED' },
-    ],
-  },
-  {
-    label: 'Generic',
-    options: [
-      { value: 'Klipper', label: 'Klipper / Moonraker' },
-      { value: 'PrusaLink', label: 'PrusaLink' },
-      { value: 'Generic Klipper Printer', label: 'Generic Klipper Printer' },
-      { value: 'Generic FDM Printer', label: 'Generic FDM Printer' },
-    ],
-  },
-];
 
 function PrinterModelSelect({
   id,
@@ -1753,48 +1651,6 @@ function getStatusDisplay(state: string | null | undefined, stg_cur_name: string
     default:
       return state ? state.charAt(0) + state.slice(1).toLowerCase() : 'Idle';
   }
-}
-
-// Map SSDP model codes to display names
-function mapModelCode(ssdpModel: string | null): string {
-  if (!ssdpModel) return '';
-  const modelMap: Record<string, string> = {
-    // H2 Series
-    'O1D': 'H2D',
-    'O1E': 'H2D Pro',
-    'O2D': 'H2D Pro',
-    'O1C': 'H2C',
-    'O1C2': 'H2C',
-    'O1S': 'H2S',
-    // X1 Series
-    'BL-P001': 'X1C',
-    'BL-P002': 'X1',
-    'BL-P003': 'X1E',
-    // X2 Series
-    'N6': 'X2D',
-    // P Series
-    'C11': 'P1S',
-    'C12': 'P1P',
-    'C13': 'P2S',
-    // A1 Series
-    'N2S': 'A1',
-    'N1': 'A1 Mini',
-    // Direct matches
-    'X1C': 'X1C',
-    'X1': 'X1',
-    'X1E': 'X1E',
-    'X2D': 'X2D',
-    'P1S': 'P1S',
-    'P1P': 'P1P',
-    'P2S': 'P2S',
-    'A1': 'A1',
-    'A1 Mini': 'A1 Mini',
-    'H2D': 'H2D',
-    'H2D Pro': 'H2D Pro',
-    'H2C': 'H2C',
-    'H2S': 'H2S',
-  };
-  return modelMap[ssdpModel] || ssdpModel;
 }
 
 // ─── AMS Name Hover Card ──────────────────────────────────────────────────────
@@ -4281,7 +4137,7 @@ function PrinterCard({
                     <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 min-w-0">
                       {fanItems.map(({ key, value, title, Icon, active, bg }) => {
                         const running = (value ?? 0) > 0;
-                        const controllableFan = isElegooSDCPProvider && ['part', 'aux', 'chamber'].includes(key);
+                        const controllableFan = (isElegooSDCPProvider || isMoonrakerProvider) && ['part', 'aux', 'chamber'].includes(key);
                         const menuKey = `${printer.id}-${key}`;
                         const indicator = (
                           <>
@@ -4681,6 +4537,7 @@ function PrinterCard({
                                 // Use array index if available, as tray.id may not always be set
                                 const tray = ams.tray[slotIdx] || ams.tray.find(t => t.id === slotIdx);
                                 const isCfsUnit = ams.module_type === 'cfs' || isK2CfsLikeUnit;
+                                const isSlotAssignmentOnlyUnit = isCfsUnit || isSnapmakerU1Unit;
                                 const snapmakerLoadState = isSnapmakerU1Unit ? snapmakerU1LoadState(tray) : null;
                                 const hasFillLevel = tray?.tray_type && tray.remain >= 0;
                                 const isEmpty = !tray?.tray_type;
@@ -4688,7 +4545,7 @@ function PrinterCard({
                                 // Check if this is the currently loaded tray
                                 // Global tray ID = ams.id * 4 + slot index (for standard AMS)
                                 const globalTrayId = ams.id * 4 + slotIdx;
-                                const isActive = effectiveTrayNow === globalTrayId;
+                                const isActive = isSnapmakerU1Unit ? tray?.active === true : effectiveTrayNow === globalTrayId;
                                 // Get cloud preset info if available
                                 const cloudInfo = tray?.tray_info_idx ? filamentInfo?.[tray.tray_info_idx] : null;
                                 // Get saved slot preset mapping (for user-configured slots)
@@ -4817,7 +4674,7 @@ function PrinterCard({
                                       </button>
                                     )}
                                     {/* Dropdown menu */}
-                                    {status?.state !== 'RUNNING' && !isCfsUnit && amsSlotMenu?.amsId === ams.id && amsSlotMenu?.slotId === slotIdx && (
+                                    {status?.state !== 'RUNNING' && !isSlotAssignmentOnlyUnit && amsSlotMenu?.amsId === ams.id && amsSlotMenu?.slotId === slotIdx && (
                                       <div className="absolute top-full left-0 mt-1 z-50 bg-bambu-dark-secondary border border-bambu-dark-tertiary rounded-lg shadow-xl py-1 min-w-[120px]">
                                         <button
                                           className={`w-full px-3 py-1.5 text-left text-xs flex items-center gap-2 ${
@@ -4875,7 +4732,7 @@ function PrinterCard({
                                         </button>
                                       </div>
                                     )}
-                                    {status?.state !== 'RUNNING' && isCfsUnit && amsSlotMenu?.amsId === ams.id && amsSlotMenu?.slotId === slotIdx && (
+                                    {status?.state !== 'RUNNING' && isSlotAssignmentOnlyUnit && amsSlotMenu?.amsId === ams.id && amsSlotMenu?.slotId === slotIdx && (
                                       <div className="absolute top-full left-0 mt-1 z-50 bg-bambu-dark-secondary border border-bambu-dark-tertiary rounded-lg shadow-xl py-1 min-w-[120px]">
                                         {supportsSpoolAssignment && (
                                           <button
@@ -6787,6 +6644,8 @@ function AddPrinterModal({
   const [isDocker, setIsDocker] = useState(false);
   const [detectedSubnets, setDetectedSubnets] = useState<string[]>([]);
   const [subnet, setSubnet] = useState('');
+  const [customSubnet, setCustomSubnet] = useState(false);
+  const [moonrakerPorts, setMoonrakerPorts] = useState('7125,80');
   const [scanProgress, setScanProgress] = useState({ scanned: 0, total: 0 });
   const [showDiagnostic, setShowDiagnostic] = useState(false);
   const [prusaLinkApiAuthMode, setPrusaLinkApiAuthMode] = useState<PrusaLinkApiAuthMode>('auto');
@@ -6924,8 +6783,33 @@ function AddPrinterModal({
     setScanProgress({ scanned: 0, total: 0 });
 
     try {
-      if (isDocker) {
-        // Use subnet scanning for Docker
+      if (isMoonrakerProvider) {
+        // Moonraker has no SSDP path — always subnet-scan via HTTP server/info
+        const ports = moonrakerPorts
+          .split(',')
+          .map((p) => parseInt(p.trim(), 10))
+          .filter((p) => Number.isInteger(p) && p >= 1 && p <= 65535);
+        await discoveryApi.startMoonrakerSubnetScan(subnet, 1.0, ports.length > 0 ? ports : undefined);
+
+        const pollInterval = setInterval(async () => {
+          try {
+            const status = await discoveryApi.getMoonrakerScanStatus();
+            setScanProgress({ scanned: status.scanned, total: status.total });
+
+            const printers = await discoveryApi.getDiscoveredMoonrakerPrinters();
+            setDiscovered(printers);
+
+            if (!status.running) {
+              clearInterval(pollInterval);
+              setDiscovering(false);
+              setHasScanned(true);
+            }
+          } catch (e) {
+            console.error('Failed to get Moonraker scan status:', e);
+          }
+        }, 500);
+      } else if (isDocker) {
+        // Use subnet scanning for Docker (Bambu)
         await discoveryApi.startSubnetScan(subnet);
 
         // Poll for scan status and results
@@ -6947,7 +6831,7 @@ function AddPrinterModal({
           }
         }, 500);
       } else {
-        // Use SSDP discovery for native installs
+        // Use SSDP discovery for native installs (Bambu)
         await discoveryApi.startDiscovery(10);
 
         // Poll for discovered printers every second
@@ -6992,13 +6876,31 @@ function AddPrinterModal({
   const selectPrinter = (printer: DiscoveredPrinter) => {
     // Don't pre-fill serial if it's a placeholder (unknown-*) - user needs to enter actual serial
     const serialNumber = printer.serial.startsWith('unknown-') ? '' : printer.serial;
-    setForm({
-      ...form,
-      name: printer.name || '',
-      serial_number: serialNumber,
-      ip_address: printer.ip_address,
-      model: mapModelCode(printer.model),
-    });
+    if (isMoonrakerProvider) {
+      setForm({
+        ...form,
+        name: printer.name || '',
+        serial_number: '',
+        ip_address: printer.ip_address,
+        api_url: printer.api_url || `http://${printer.ip_address}:7125`,
+        auth_token: '',
+        model: '',
+      });
+      if (printer.needs_auth) {
+        setDiscoveryError(t('printers.discovery.moonrakerNeedsAuth'));
+      } else {
+        setDiscoveryError('');
+      }
+    } else {
+      setForm({
+        ...form,
+        name: printer.name || '',
+        serial_number: serialNumber,
+        ip_address: printer.ip_address,
+        model: mapModelCode(printer.model),
+      });
+      setDiscoveryError('');
+    }
     // Clear discovery results after selection
     setDiscovered([]);
   };
@@ -7008,6 +6910,7 @@ function AddPrinterModal({
     return () => {
       discoveryApi.stopDiscovery().catch(() => {});
       discoveryApi.stopSubnetScan().catch(() => {});
+      discoveryApi.stopMoonrakerSubnetScan().catch(() => {});
     };
   }, []);
 
@@ -7108,38 +7011,81 @@ function AddPrinterModal({
             )}
           </div>
 
-          {/* Discovery Section */}
-          {!isHttpProvider && (
+          {/* Discovery Section — Bambu (SSDP/subnet) or Moonraker (subnet HTTP) */}
+          {(!isHttpProvider || isMoonrakerProvider) && (
           <div className="mb-4 pb-4 border-b border-bambu-dark-tertiary">
-            {isDocker && (
+            {(isDocker || isMoonrakerProvider) && (
               <div className="mb-3">
                 <label className="block text-sm text-bambu-gray mb-1">
                   {t('printers.discovery.subnetToScan')}
                 </label>
-                {detectedSubnets.length > 0 ? (
+                {detectedSubnets.length > 0 && !customSubnet ? (
                   <select
                     className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none text-sm"
                     value={subnet}
-                    onChange={(e) => setSubnet(e.target.value)}
+                    onChange={(e) => {
+                      if (e.target.value === '__custom__') {
+                        setCustomSubnet(true);
+                        setSubnet('');
+                      } else {
+                        setSubnet(e.target.value);
+                      }
+                    }}
                     disabled={discovering}
                   >
                     {detectedSubnets.map(s => (
                       <option key={s} value={s}>{s}</option>
                     ))}
+                    <option value="__custom__">{t('printers.discovery.customSubnet')}</option>
                   </select>
                 ) : (
-                  <input
-                    type="text"
-                    className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none text-sm"
-                    value={subnet}
-                    onChange={(e) => setSubnet(e.target.value)}
-                    placeholder="192.168.1.0/24"
-                    disabled={discovering}
-                  />
+                  <div className="space-y-2">
+                    <input
+                      type="text"
+                      className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none text-sm"
+                      value={subnet}
+                      onChange={(e) => setSubnet(e.target.value)}
+                      placeholder="192.168.1.0/24"
+                      disabled={discovering}
+                    />
+                    {detectedSubnets.length > 0 && customSubnet && (
+                      <button
+                        type="button"
+                        className="text-xs text-bambu-green hover:underline"
+                        onClick={() => {
+                          setCustomSubnet(false);
+                          setSubnet(detectedSubnets[0]);
+                        }}
+                        disabled={discovering}
+                      >
+                        {t('printers.discovery.useDetectedSubnet')}
+                      </button>
+                    )}
+                  </div>
                 )}
                 <p className="mt-1 text-xs text-bambu-gray">
-                  {t('printers.discovery.dockerNote')}
+                  {isMoonrakerProvider
+                    ? t('printers.discovery.moonrakerSubnetNote')
+                    : t('printers.discovery.dockerNote')}
                 </p>
+                {isMoonrakerProvider && (
+                  <div className="mt-3">
+                    <label className="block text-sm text-bambu-gray mb-1">
+                      {t('printers.discovery.moonrakerPorts')}
+                    </label>
+                    <input
+                      type="text"
+                      className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none text-sm"
+                      value={moonrakerPorts}
+                      onChange={(e) => setMoonrakerPorts(e.target.value)}
+                      placeholder="7125,80"
+                      disabled={discovering}
+                    />
+                    <p className="mt-1 text-xs text-bambu-gray">
+                      {t('printers.discovery.moonrakerPortsNote')}
+                    </p>
+                  </div>
+                )}
               </div>
             )}
 
@@ -7147,20 +7093,24 @@ function AddPrinterModal({
               type="button"
               variant="secondary"
               onClick={startDiscovery}
-              disabled={discovering}
+              disabled={discovering || ((isDocker || isMoonrakerProvider) && !subnet.trim())}
               className="w-full"
             >
               {discovering ? (
                 <>
                   <Loader2 className="w-4 h-4 animate-spin" />
-                  {isDocker && scanProgress.total > 0
+                  {(isDocker || isMoonrakerProvider) && scanProgress.total > 0
                     ? t('printers.discovery.scanProgress', { scanned: scanProgress.scanned, total: scanProgress.total })
                     : t('printers.discovery.scanning')}
                 </>
               ) : (
                 <>
                   <Search className="w-4 h-4" />
-                  {isDocker ? t('printers.discovery.scanSubnet') : t('printers.discovery.discoverNetwork')}
+                  {isMoonrakerProvider
+                    ? t('printers.discovery.scanSubnetMoonraker')
+                    : isDocker
+                      ? t('printers.discovery.scanSubnet')
+                      : t('printers.discovery.discoverNetwork')}
                 </>
               )}
             </Button>
@@ -7182,8 +7132,14 @@ function AddPrinterModal({
                         {printer.name || printer.serial}
                       </p>
                       <p className="text-xs text-bambu-gray truncate">
-                        {mapModelCode(printer.model) || t('printers.discovery.unknown')} • {printer.ip_address}
-                        {printer.serial.startsWith('unknown-') && (
+                        {isMoonrakerProvider
+                          ? (printer.api_url || `http://${printer.ip_address}:7125`)
+                          : (mapModelCode(printer.model) || t('printers.discovery.unknown'))}
+                        {' • '}{printer.ip_address}
+                        {printer.needs_auth && (
+                          <span className="text-yellow-500"> • auth</span>
+                        )}
+                        {!isMoonrakerProvider && printer.serial.startsWith('unknown-') && (
                           <span className="text-yellow-500"> • {t('printers.discovery.serialRequired')}</span>
                         )}
                       </p>
@@ -7196,13 +7152,21 @@ function AddPrinterModal({
 
             {discovering && (
               <p className="mt-2 text-sm text-bambu-gray text-center">
-                {isDocker ? t('printers.discovery.scanningSubnet') : t('printers.discovery.scanningNetwork')}
+                {isMoonrakerProvider
+                  ? t('printers.discovery.scanningSubnetMoonraker')
+                  : isDocker
+                    ? t('printers.discovery.scanningSubnet')
+                    : t('printers.discovery.scanningNetwork')}
               </p>
             )}
 
             {hasScanned && !discovering && discovered.length === 0 && (
               <p className="mt-2 text-sm text-bambu-gray text-center">
-                {isDocker ? t('printers.discovery.noPrintersFoundSubnet') : t('printers.discovery.noPrintersFoundNetwork')}
+                {isMoonrakerProvider
+                  ? t('printers.discovery.noPrintersFoundSubnetMoonraker')
+                  : isDocker
+                    ? t('printers.discovery.noPrintersFoundSubnet')
+                    : t('printers.discovery.noPrintersFoundNetwork')}
               </p>
             )}
 

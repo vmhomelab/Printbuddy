@@ -73,6 +73,34 @@ async def test_blocks_on_deficit_promotes_to_manual_start(scheduler, db_session,
 
 
 @pytest.mark.asyncio
+async def test_skip_filament_check_acknowledgement_allows_dispatch(scheduler, db_session, queue_item):
+    """A persisted Print Anyway acknowledgement must survive scheduler ticks."""
+    item = await queue_item(skip_filament_check=True, filament_short=True, manual_start=False)
+    with patch(
+        "backend.app.services.print_scheduler.compute_deficit_for_queue_item",
+        AsyncMock(
+            return_value=[
+                FilamentDeficit(
+                    slot_id=1,
+                    ams_id=0,
+                    tray_id=0,
+                    filament_type="PLA",
+                    required_grams=270.0,
+                    remaining_grams=200.0,
+                ),
+            ]
+        ),
+    ):
+        blocked = await scheduler._block_on_filament_deficit(db_session, item)
+
+    assert blocked is False
+    await db_session.refresh(item)
+    assert item.manual_start is False
+    assert item.filament_short is False
+    assert item.skip_filament_check is True
+
+
+@pytest.mark.asyncio
 async def test_clears_stale_flag_when_deficit_resolves(scheduler, db_session, queue_item):
     """Previously-flagged item whose spool was swapped is unblocked."""
     item = await queue_item(filament_short=True, manual_start=False)

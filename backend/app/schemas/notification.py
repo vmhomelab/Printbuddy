@@ -19,6 +19,7 @@ class ProviderType(StrEnum):
     DISCORD = "discord"
     WEBHOOK = "webhook"
     HOMEASSISTANT = "homeassistant"
+    NOTIFY = "notify"
 
 
 class NotificationProviderBase(BaseModel):
@@ -86,6 +87,10 @@ class NotificationProviderBase(BaseModel):
 
     # Printer filter
     printer_id: int | None = Field(default=None, description="Specific printer ID or null for all")
+    printer_ids: list[int] = Field(
+        default_factory=list,
+        description="Selected printer IDs. Empty means all printers unless legacy printer_id is set.",
+    )
 
     @field_validator("quiet_hours_start", "quiet_hours_end", "daily_digest_time")
     @classmethod
@@ -170,6 +175,7 @@ class NotificationProviderUpdate(BaseModel):
 
     # Printer filter
     printer_id: int | None = None
+    printer_ids: list[int] | None = None
 
 
 class NotificationProviderResponse(NotificationProviderBase):
@@ -253,6 +259,21 @@ class EmailConfig(BaseModel):
     from_email: str = Field(..., description="From email address")
     to_email: str = Field(..., description="Recipient email address")
     use_tls: bool = Field(default=True, description="Use TLS encryption")
+
+
+class NotifyConfig(BaseModel):
+    """Notify push notification configuration."""
+
+    device_id: str = Field(..., description="Notify device ID")
+    device_token: str = Field(..., description="Notify device token")
+    base_url: str = Field(default="https://push.getnotifyapp.com", description="Notify gateway URL")
+    live_activities_enabled: bool = Field(
+        default=False, description="Create and update iOS Live Activities during prints"
+    )
+    live_activity_keepalive_seconds: int = Field(default=60, description="Live Activity reconciliation interval")
+    live_activity_end_keep_for_seconds: int = Field(
+        default=300, description="Seconds to keep final Live Activity state"
+    )
 
 
 # Notification Log schemas

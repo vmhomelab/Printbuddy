@@ -94,7 +94,9 @@ from backend.app.services.local_backup import local_backup_service
 from backend.app.services.mqtt_relay import mqtt_relay
 from backend.app.services.mqtt_smart_plug import mqtt_smart_plug_service
 from backend.app.services.notification_service import notification_service
+from backend.app.services.notify_live_activity_service import notify_live_activity_service
 from backend.app.services.obico_detection import obico_detection_service
+from backend.app.services.print_progress import effective_print_progress
 from backend.app.services.print_scheduler import scheduler as print_scheduler
 from backend.app.services.printer_manager import (
     init_printer_connections,
@@ -1372,8 +1374,9 @@ async def on_printer_status_change(printer_id: int, state: PrinterState):
 
     # Check for progress milestone notifications (25%, 50%, 75%)
     logger = logging.getLogger(__name__)
-    progress = state.progress or 0
-    is_printing = state.state in ("RUNNING", "PRINTING")
+    raw_progress = state.progress or 0
+    progress = effective_print_progress(state)
+    is_printing = bool(state.connected) and state.state in ("RUNNING", "PRINTING")
     provider = _provider_name_for_progress(printer_id)
 
     if is_printing:
@@ -1385,13 +1388,38 @@ async def on_printer_status_change(printer_id: int, state: PrinterState):
             _print_almost_done_notified[printer_id] = False
             _first_layer_notified[printer_id] = False
             logger.info(
-                "[PROGRESS_NOTIFY] reset tracking for new print: printer=%s provider=%s job=%s previous_job=%s progress=%.2f",
+                "[PROGRESS_NOTIFY] reset tracking for new print: printer=%s provider=%s job=%s previous_job=%s progress=%.2f raw_progress=%.2f",
                 printer_id,
                 provider or "unknown",
                 job_key,
                 previous_job_key,
                 progress,
+                raw_progress,
             )
+
+        try:
+            async with async_session() as db:
+                from backend.app.models.printer import Printer
+
+                result = await db.execute(select(Printer).where(Printer.id == printer_id))
+                printer = result.scalar_one_or_none()
+                printer_name = printer.name if printer else f"Printer {printer_id}"
+                filename = state.subtask_name or state.gcode_file or "Unknown"
+                remaining_time_seconds = state.remaining_time * 60 if state.remaining_time else None
+
+                await notify_live_activity_service.on_print_progress(
+                    db,
+                    printer_id=printer_id,
+                    printer_name=printer_name,
+                    filename=filename,
+                    progress=progress,
+                    remaining_time=remaining_time_seconds,
+                    subtask_id=state.subtask_id,
+                    layer_num=state.layer_num,
+                    total_layers=state.total_layers,
+                )
+        except Exception as e:
+            logger.warning(f"Live Activity progress update failed: {e}")
 
         if progress < 5:
             # Reset milestone tracking at the beginning of a print even while the
@@ -1457,6 +1485,9 @@ async def on_printer_status_change(printer_id: int, state: PrinterState):
                             db,
                             remaining_time_seconds,
                             image_data=image_data,
+                            layer_num=state.layer_num,
+                            total_layers=state.total_layers,
+                            update_live_activity=False,
                         )
                 except Exception as e:
                     logger.warning(f"Progress milestone notification failed: {e}")
@@ -1486,6 +1517,8 @@ async def on_printer_status_change(printer_id: int, state: PrinterState):
                         db,
                         remaining_time_seconds,
                         image_data=image_data,
+                        layer_num=state.layer_num,
+                        total_layers=state.total_layers,
                     )
             except Exception as e:
                 logger.warning(f"Print almost-done notification failed: {e}")
@@ -5852,6 +5885,9 @@ async def lifespan(app: FastAPI):
     # Start the notification digest scheduler
     notification_service.start_digest_scheduler()
 
+    # Start Notify Live Activity keepalive/reconciliation
+    notify_live_activity_service.start_scheduler()
+
     # Start the GitHub backup scheduler
     await github_backup_service.start_scheduler()
 
@@ -5905,6 +5941,7 @@ async def lifespan(app: FastAPI):
     await background_dispatch.stop()
     smart_plug_manager.stop_scheduler()
     notification_service.stop_digest_scheduler()
+    notify_live_activity_service.stop_scheduler()
     github_backup_service.stop_scheduler()
     local_backup_service.stop_scheduler()
     library_trash_service.stop_scheduler()

@@ -106,6 +106,27 @@ class TestNotificationsAPI:
         result = response.json()
         assert result["printer_id"] == printer.id
 
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_create_provider_with_selected_printers(self, async_client: AsyncClient, printer_factory, db_session):
+        """Verify provider can be scoped to multiple selected printers."""
+        printer_a = await printer_factory(name="Printer A")
+        printer_b = await printer_factory(name="Printer B")
+
+        data = {
+            "name": "Selected Printer Ntfy",
+            "provider_type": "ntfy",
+            "config": {"server": "https://ntfy.sh", "topic": "test-topic"},
+            "printer_ids": [printer_a.id, printer_b.id],
+        }
+
+        response = await async_client.post("/api/v1/notifications/", json=data)
+
+        assert response.status_code == 200
+        result = response.json()
+        assert result["printer_id"] is None
+        assert result["printer_ids"] == [printer_a.id, printer_b.id]
+
     # ========================================================================
     # Get single endpoint
     # ========================================================================
@@ -203,6 +224,35 @@ class TestNotificationsAPI:
 
         assert response.status_code == 200
         assert response.json()["enabled"] is True
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_update_provider_selected_printers(
+        self, async_client: AsyncClient, notification_provider_factory, printer_factory, db_session
+    ):
+        """Verify provider printer scope can be changed to multiple selected printers."""
+        legacy_printer = await printer_factory(name="Legacy Printer")
+        provider = await notification_provider_factory(printer_id=legacy_printer.id)
+        printer_a = await printer_factory(name="Printer A")
+        printer_b = await printer_factory(name="Printer B")
+
+        response = await async_client.patch(
+            f"/api/v1/notifications/{provider.id}",
+            json={"printer_ids": [printer_a.id, printer_b.id]},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["printer_id"] is None
+        assert response.json()["printer_ids"] == [printer_a.id, printer_b.id]
+
+        response = await async_client.patch(
+            f"/api/v1/notifications/{provider.id}",
+            json={"printer_ids": []},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["printer_id"] is None
+        assert response.json()["printer_ids"] == []
 
     @pytest.mark.asyncio
     @pytest.mark.integration

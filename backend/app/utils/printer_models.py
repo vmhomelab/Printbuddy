@@ -15,6 +15,7 @@ PRINTER_MODEL_MAP = {
     "Bambu Lab A1": "A1",
     "Bambu Lab A1 Mini": "A1 Mini",
     "Bambu Lab A1 mini": "A1 Mini",
+    "Bambu Lab A2L": "A2L",
     "Bambu Lab H2D": "H2D",
     "Bambu Lab H2D Pro": "H2D Pro",
     "Bambu Lab H2C": "H2C",
@@ -40,9 +41,11 @@ PRINTER_MODEL_ID_MAP = {
     # A1 series
     "A11": "A1",
     "A12": "A1 Mini",
-    "N1": "A1",
-    "N2S": "A1 Mini",
+    "N1": "A1 Mini",
+    "N2S": "A1",
     "A04": "A1 Mini",
+    # A2 series (A2L is single-FDM + integrated cutter/plotter — single nozzle)
+    "N9": "A2L",
     # H2 series (Office/H series)
     "O1D": "H2D",
     "O1E": "H2D Pro",  # Some devices report O1E
@@ -56,7 +59,7 @@ PRINTER_MODEL_ID_MAP = {
 # Rod/rail type classification for maintenance tasks.
 # Carbon rods: X1, P1 series (CoreXY with carbon fiber rods)
 # Steel rods: P2S, X2D series (hardened steel linear shafts)
-# Linear rails: A1, H2 series (linear rail motion system)
+# Linear rails: A1, A2, H2 series (linear rail motion system)
 # Values must be uppercase with spaces stripped for normalized comparison.
 CARBON_ROD_MODELS = frozenset(
     [
@@ -89,13 +92,15 @@ LINEAR_RAIL_MODELS = frozenset(
         # Display names (uppercase, no spaces)
         "A1",
         "A1MINI",
+        "A2L",
         "H2D",
         "H2DPRO",
         "H2C",
         "H2S",
         # Internal codes
-        "N1",  # A1
-        "N2S",  # A1 Mini
+        "N1",  # A1 Mini
+        "N2S",  # A1
+        "N9",  # A2L
         "A04",  # A1 Mini (alternate)
         "A11",  # A1
         "A12",  # A1 Mini

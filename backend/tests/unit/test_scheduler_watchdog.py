@@ -137,6 +137,43 @@ class TestWatchdogRevertsWhenStuck:
         client.force_reconnect_stale_session.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_marks_failed_after_max_dispatch_attempts(self, db_session):
+        """The watchdog must bound upload/start retry loops."""
+        async with db_session() as db:
+            item = await db.get(PrintQueueItem, 1)
+            item.status = "printing"
+            item.dispatch_attempts = 2
+            item.dispatching_at = None
+            await db.commit()
+
+        get_status = MagicMock(return_value=_status("FINISH", "OLD_SUBTASK"))
+        client = MagicMock()
+
+        with (
+            patch("backend.app.services.print_scheduler.printer_manager.get_status", get_status),
+            patch("backend.app.services.print_scheduler.printer_manager.get_client", MagicMock(return_value=client)),
+            patch("backend.app.services.print_scheduler.async_session", db_session),
+            patch("backend.app.core.database.async_session", db_session),
+        ):
+            await PrintScheduler._watchdog_print_start(
+                queue_item_id=1,
+                printer_id=42,
+                pre_state="FINISH",
+                pre_subtask_id="OLD_SUBTASK",
+                timeout=0.2,
+                poll_interval=0.05,
+            )
+
+        async with db_session() as db:
+            item = await db.get(PrintQueueItem, 1)
+            assert item.status == "failed"
+            assert item.dispatch_attempts == 3
+            assert item.completed_at is not None
+            assert "3 dispatch attempts" in item.error_message
+
+        client.force_reconnect_stale_session.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_reverts_on_finish_to_idle_user_dismissed_prompt(self, db_session):
         """Regression for #1370: when pre_state is FINISH and the printer
         transitions to IDLE during the watchdog window, that's the user

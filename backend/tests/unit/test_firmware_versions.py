@@ -14,7 +14,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from backend.app.services.firmware_check import FirmwareCheckService, FirmwareVersion
+from backend.app.services.firmware_check import (
+    API_KEY_TO_DEV_MODEL,
+    API_KEY_TO_WIKI_PATH,
+    MODEL_TO_API_KEY,
+    FirmwareCheckService,
+    FirmwareVersion,
+)
 
 WIKI_SAMPLE = """
 <h2 id="h-01030000-20260303" class="toc-header">01.03.00.00 (20260303)</h2>
@@ -25,6 +31,15 @@ WIKI_SAMPLE = """
 <h2 id="h-01020200-20251105" class="toc-header">01.02.02.00 (20251105)</h2>
 <p>Some more text referencing 00.00.00.00 incidentally.</p>
 """
+
+
+def test_a2l_firmware_model_registry():
+    """A2L/N9 must resolve to Bambu's A2L firmware lookup surfaces."""
+    assert MODEL_TO_API_KEY["A2L"] == "a2l"
+    assert MODEL_TO_API_KEY["Bambu Lab A2L"] == "a2l"
+    assert MODEL_TO_API_KEY["N9"] == "a2l"
+    assert API_KEY_TO_DEV_MODEL["a2l"] == "N9"
+    assert API_KEY_TO_WIKI_PATH["a2l"] == "/en/a2l/manual/a2l-firmware-release-history"
 
 
 @pytest.mark.asyncio

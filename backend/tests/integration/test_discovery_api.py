@@ -25,10 +25,12 @@ class TestDiscoveryAPI:
         assert "is_docker" in data
         assert "ssdp_running" in data
         assert "scan_running" in data
+        assert "moonraker_scan_running" in data
         assert "subnets" in data
         assert isinstance(data["is_docker"], bool)
         assert isinstance(data["ssdp_running"], bool)
         assert isinstance(data["scan_running"], bool)
+        assert isinstance(data["moonraker_scan_running"], bool)
         assert isinstance(data["subnets"], list)
 
     @pytest.mark.asyncio
@@ -139,6 +141,56 @@ class TestDiscoveryAPI:
 
         # Should return 422 validation error or 200 with empty results
         assert response.status_code in [200, 422]
+
+    # ========================================================================
+    # Moonraker subnet scanning endpoints
+    # ========================================================================
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_start_moonraker_subnet_scan(self, async_client: AsyncClient):
+        """Verify Moonraker subnet scan can be started."""
+        response = await async_client.post(
+            "/api/v1/discovery/moonraker/scan",
+            json={"subnet": "192.168.1.0/30", "timeout": 0.1},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert "running" in data
+        assert "scanned" in data
+        assert "total" in data
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_get_moonraker_scan_status(self, async_client: AsyncClient):
+        """Verify Moonraker scan status endpoint works."""
+        response = await async_client.get("/api/v1/discovery/moonraker/scan/status")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert "running" in data
+        assert "scanned" in data
+        assert "total" in data
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_stop_moonraker_subnet_scan(self, async_client: AsyncClient):
+        """Verify Moonraker subnet scan can be stopped."""
+        response = await async_client.post("/api/v1/discovery/moonraker/scan/stop")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert "running" in data
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_get_discovered_moonraker_printers_empty(self, async_client: AsyncClient):
+        """Verify empty Moonraker discovery list when nothing found."""
+        response = await async_client.get("/api/v1/discovery/moonraker/printers")
+
+        assert response.status_code == 200
+        assert isinstance(response.json(), list)
 
 
 class TestDiscoveryService:

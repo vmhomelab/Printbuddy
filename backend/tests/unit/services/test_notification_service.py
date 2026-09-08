@@ -54,6 +54,26 @@ class TestNotificationService:
         db.commit = AsyncMock()
         return db
 
+    @pytest.mark.asyncio
+    async def test_get_providers_for_event_matches_selected_printer_scope(
+        self, service, db_session, notification_provider_factory, printer_factory
+    ):
+        """Providers scoped to selected printers only match those printers."""
+        printer_a = await printer_factory(name="Printer A")
+        printer_b = await printer_factory(name="Printer B")
+        printer_c = await printer_factory(name="Printer C")
+        all_provider = await notification_provider_factory(name="All Printers", printer_id=None)
+        selected_provider = await notification_provider_factory(name="Selected Printers", printer_id=None)
+        other_provider = await notification_provider_factory(name="Other Printer", printer_id=None)
+
+        selected_provider.printers = [printer_a, printer_b]
+        other_provider.printers = [printer_c]
+        await db_session.commit()
+
+        providers = await service._get_providers_for_event(db_session, "on_print_start", printer_a.id)
+
+        assert {provider.name for provider in providers} == {"All Printers", "Selected Printers"}
+
     # ========================================================================
     # Tests for on_print_start
     # ========================================================================
@@ -96,6 +116,33 @@ class TestNotificationService:
             )
 
             mock_send.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_on_print_start_updates_live_activity_even_without_normal_start_provider(self, service, mock_db):
+        """Live Activities start independently from normal print-start push toggles."""
+        with (
+            patch.object(service, "_get_providers_for_event", new_callable=AsyncMock) as mock_get,
+            patch.object(service, "_send_to_providers", new_callable=AsyncMock) as mock_send,
+            patch("backend.app.services.notification_service.notify_live_activity_service") as mock_live,
+        ):
+            mock_get.return_value = []
+            mock_live.on_print_start = AsyncMock()
+
+            await service.on_print_start(
+                printer_id=1,
+                printer_name="Test Printer",
+                data={"filename": "test.3mf", "subtask_id": "task-1"},
+                db=mock_db,
+            )
+
+            mock_send.assert_not_called()
+            mock_live.on_print_start.assert_awaited_once_with(
+                mock_db,
+                printer_id=1,
+                printer_name="Test Printer",
+                data={"filename": "test.3mf", "subtask_id": "task-1"},
+                archive_data=None,
+            )
 
     # ========================================================================
     # Tests for on_print_complete (status routing)
@@ -191,6 +238,34 @@ class TestNotificationService:
             assert call_args[0][1] == "on_print_stopped"
 
     @pytest.mark.asyncio
+    async def test_on_print_complete_ends_live_activity_even_without_normal_provider(self, service, mock_db):
+        """Live Activity cleanup must not depend on normal completion push toggles."""
+        with (
+            patch.object(service, "_get_providers_for_event", new_callable=AsyncMock) as mock_get,
+            patch.object(service, "_send_to_providers", new_callable=AsyncMock) as mock_send,
+            patch("backend.app.services.notification_service.notify_live_activity_service") as mock_live,
+        ):
+            mock_get.return_value = []
+            mock_live.on_print_end = AsyncMock()
+
+            await service.on_print_complete(
+                printer_id=1,
+                printer_name="Test Printer",
+                status="completed",
+                data={"filename": "test.3mf", "subtask_id": "task-1"},
+                db=mock_db,
+            )
+
+            mock_send.assert_not_called()
+            mock_live.on_print_end.assert_awaited_once_with(
+                mock_db,
+                printer_id=1,
+                printer_name="Test Printer",
+                status="completed",
+                data={"filename": "test.3mf", "subtask_id": "task-1"},
+            )
+
+    @pytest.mark.asyncio
     async def test_on_print_complete_uses_provider_duration_without_archive(self, service, mock_provider, mock_db):
         """Polling providers can send elapsed time even when no archive was matched."""
         with (
@@ -212,6 +287,38 @@ class TestNotificationService:
             variables = mock_build.call_args.args[2]
             assert variables["duration"] == "1h 1m"
             assert mock_send.call_args.kwargs["variables"]["duration"] == "1h 1m"
+
+    @pytest.mark.asyncio
+    async def test_on_print_progress_updates_live_activity_even_without_normal_provider(self, service, mock_db):
+        """Live Activity progress updates are independent from milestone push toggles."""
+        with (
+            patch.object(service, "_get_providers_for_event", new_callable=AsyncMock) as mock_get,
+            patch.object(service, "_send_to_providers", new_callable=AsyncMock) as mock_send,
+            patch("backend.app.services.notification_service.notify_live_activity_service") as mock_live,
+        ):
+            mock_get.return_value = []
+            mock_live.on_print_progress = AsyncMock()
+
+            await service.on_print_progress(
+                printer_id=1,
+                printer_name="Test Printer",
+                filename="test.3mf",
+                progress=50,
+                remaining_time=1200,
+                db=mock_db,
+            )
+
+            mock_send.assert_not_called()
+            mock_live.on_print_progress.assert_awaited_once_with(
+                mock_db,
+                printer_id=1,
+                printer_name="Test Printer",
+                filename="test.3mf",
+                progress=50,
+                remaining_time=1200,
+                layer_num=None,
+                total_layers=None,
+            )
 
     @pytest.mark.asyncio
     async def test_on_print_almost_done_sends_snapshot_notification(self, service, mock_provider, mock_db):
@@ -727,6 +834,88 @@ class TestNotificationProviderTypes:
             call_args = mock_client.post.call_args
             payload = call_args.kwargs.get("json") or call_args[1].get("json")
             assert "image" not in payload
+
+    @pytest.mark.asyncio
+    async def test_notify_provider_sends_notify_json_request(self, service):
+        """Notify provider sends a normal push through Notify's JSON endpoint."""
+        config = {
+            "device_id": "ABCD1234",
+            "device_token": "notify-token",
+            "base_url": "https://push.getnotifyapp.com",
+        }
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.text = '{"success": true}'
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+
+        with patch.object(service, "_get_client", new_callable=AsyncMock) as mock_get_client:
+            mock_get_client.return_value = mock_client
+
+            success, message = await service._send_notify(
+                config, "Test Title", "Test Message", event_type="print_start"
+            )
+
+        assert success is True
+        assert message == "Notification sent via Notify"
+        mock_client.post.assert_called_once()
+        url = mock_client.post.call_args.args[0]
+        payload = mock_client.post.call_args.kwargs["json"]
+        assert url == "https://push.getnotifyapp.com/notify-json/ABCD1234?token=notify-token"
+        assert payload["title"] == "Test Title"
+        assert payload["text"] == "Test Message"
+        assert payload["groupType"] == "print_start"
+        assert (
+            payload["iconUrl"]
+            == "https://raw.githubusercontent.com/vmhomelab/printbuddy/main/static/img/printbuddy_icon.png"
+        )
+
+    @pytest.mark.asyncio
+    async def test_notify_provider_requires_device_credentials(self, service):
+        """Notify provider requires both device id and device token."""
+        success, message = await service._send_notify({"device_id": "ABCD1234"}, "Test", "Message")
+
+        assert success is False
+        assert "Device ID and device token are required" in message
+
+    @pytest.mark.asyncio
+    async def test_send_test_notification_dispatches_notify_provider(self, service):
+        """The generic test-notification entry point supports Notify."""
+        with patch.object(service, "_send_notify", new_callable=AsyncMock) as mock_send:
+            mock_send.return_value = (True, "ok")
+
+            success, message = await service.send_test_notification(
+                "notify", {"device_id": "ABCD1234", "device_token": "notify-token"}
+            )
+
+        assert success is True
+        assert message == "ok"
+        mock_send.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_send_to_provider_dispatches_notify_provider(self, service):
+        """Runtime provider dispatch supports Notify."""
+        provider = MagicMock()
+        provider.name = "Notify"
+        provider.provider_type = "notify"
+        provider.config = json.dumps({"device_id": "ABCD1234", "device_token": "notify-token"})
+        provider.quiet_hours_enabled = False
+
+        with patch.object(service, "_send_notify", new_callable=AsyncMock) as mock_send:
+            mock_send.return_value = (True, "ok")
+
+            success, message = await service._send_to_provider(
+                provider,
+                "Runtime Title",
+                "Runtime Message",
+                event_type="print_complete",
+            )
+
+        assert success is True
+        assert message == "ok"
+        mock_send.assert_awaited_once()
 
 
 class TestTelegramProvider:

@@ -7,11 +7,13 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import delete, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from backend.app.core.auth import RequirePermissionIfAuthEnabled
 from backend.app.core.database import get_db
 from backend.app.core.permissions import Permission
 from backend.app.models.notification import NotificationLog, NotificationProvider
+from backend.app.models.printer import Printer
 from backend.app.models.user import User
 from backend.app.schemas.notification import (
     NotificationLogResponse,
@@ -31,6 +33,7 @@ router = APIRouter(prefix="/notifications", tags=["notifications"])
 
 def _provider_to_dict(provider: NotificationProvider) -> dict:
     """Convert a NotificationProvider model to a response dictionary."""
+    printer_ids = [printer.id for printer in getattr(provider, "printers", [])]
     return {
         "id": provider.id,
         "name": provider.name,
@@ -79,6 +82,7 @@ def _provider_to_dict(provider: NotificationProvider) -> dict:
         "daily_digest_time": provider.daily_digest_time,
         # Printer filter
         "printer_id": provider.printer_id,
+        "printer_ids": printer_ids,
         # Status tracking
         "last_success": provider.last_success,
         "last_error": provider.last_error,
@@ -87,6 +91,20 @@ def _provider_to_dict(provider: NotificationProvider) -> dict:
         "created_at": provider.created_at,
         "updated_at": provider.updated_at,
     }
+
+
+async def _load_printers_by_ids(db: AsyncSession, printer_ids: list[int]) -> list[Printer]:
+    """Load selected printers preserving user-provided order, rejecting unknown IDs."""
+    unique_ids = list(dict.fromkeys(printer_ids))
+    if not unique_ids:
+        return []
+
+    result = await db.execute(select(Printer).where(Printer.id.in_(unique_ids)))
+    printers_by_id = {printer.id: printer for printer in result.scalars().all()}
+    missing_ids = [printer_id for printer_id in unique_ids if printer_id not in printers_by_id]
+    if missing_ids:
+        raise HTTPException(status_code=400, detail=f"Unknown printer id(s): {', '.join(map(str, missing_ids))}")
+    return [printers_by_id[printer_id] for printer_id in unique_ids]
 
 
 # ============================================================================
@@ -100,7 +118,11 @@ async def list_notification_providers(
     _: User | None = RequirePermissionIfAuthEnabled(Permission.NOTIFICATIONS_READ),
 ):
     """List all notification providers."""
-    result = await db.execute(select(NotificationProvider).order_by(NotificationProvider.created_at.desc()))
+    result = await db.execute(
+        select(NotificationProvider)
+        .options(selectinload(NotificationProvider.printers))
+        .order_by(NotificationProvider.created_at.desc())
+    )
     providers = result.scalars().all()
 
     return [_provider_to_dict(provider) for provider in providers]
@@ -113,6 +135,8 @@ async def create_notification_provider(
     _: User | None = RequirePermissionIfAuthEnabled(Permission.NOTIFICATIONS_CREATE),
 ):
     """Create a new notification provider."""
+    selected_printers = await _load_printers_by_ids(db, provider_data.printer_ids)
+
     provider = NotificationProvider(
         name=provider_data.name,
         provider_type=provider_data.provider_type.value,
@@ -159,8 +183,9 @@ async def create_notification_provider(
         daily_digest_enabled=provider_data.daily_digest_enabled,
         daily_digest_time=provider_data.daily_digest_time,
         # Printer filter
-        printer_id=provider_data.printer_id,
+        printer_id=None if selected_printers else provider_data.printer_id,
     )
+    provider.printers = selected_printers
 
     db.add(provider)
     await db.commit()
@@ -382,7 +407,11 @@ async def get_notification_provider(
     _: User | None = RequirePermissionIfAuthEnabled(Permission.NOTIFICATIONS_READ),
 ):
     """Get a specific notification provider."""
-    result = await db.execute(select(NotificationProvider).where(NotificationProvider.id == provider_id))
+    result = await db.execute(
+        select(NotificationProvider)
+        .options(selectinload(NotificationProvider.printers))
+        .where(NotificationProvider.id == provider_id)
+    )
     provider = result.scalar_one_or_none()
 
     if not provider:
@@ -399,7 +428,11 @@ async def update_notification_provider(
     _: User | None = RequirePermissionIfAuthEnabled(Permission.NOTIFICATIONS_UPDATE),
 ):
     """Update a notification provider."""
-    result = await db.execute(select(NotificationProvider).where(NotificationProvider.id == provider_id))
+    result = await db.execute(
+        select(NotificationProvider)
+        .options(selectinload(NotificationProvider.printers))
+        .where(NotificationProvider.id == provider_id)
+    )
     provider = result.scalar_one_or_none()
 
     if not provider:
@@ -409,7 +442,14 @@ async def update_notification_provider(
     update_dict = update_data.model_dump(exclude_unset=True)
 
     for key, value in update_dict.items():
-        if key == "config" and value is not None:
+        if key == "printer_ids":
+            selected_printers = await _load_printers_by_ids(db, value or [])
+            provider.printers = selected_printers
+            provider.printer_id = None
+        elif key == "printer_id":
+            provider.printers = []
+            setattr(provider, key, value)
+        elif key == "config" and value is not None:
             setattr(provider, key, json.dumps(value))
         elif key == "provider_type" and value is not None:
             setattr(provider, key, value.value)
@@ -431,7 +471,11 @@ async def delete_notification_provider(
     _: User | None = RequirePermissionIfAuthEnabled(Permission.NOTIFICATIONS_DELETE),
 ):
     """Delete a notification provider."""
-    result = await db.execute(select(NotificationProvider).where(NotificationProvider.id == provider_id))
+    result = await db.execute(
+        select(NotificationProvider)
+        .options(selectinload(NotificationProvider.printers))
+        .where(NotificationProvider.id == provider_id)
+    )
     provider = result.scalar_one_or_none()
 
     if not provider:
@@ -453,7 +497,11 @@ async def test_notification_provider(
     _: User | None = RequirePermissionIfAuthEnabled(Permission.NOTIFICATIONS_UPDATE),
 ):
     """Send a test notification using an existing provider."""
-    result = await db.execute(select(NotificationProvider).where(NotificationProvider.id == provider_id))
+    result = await db.execute(
+        select(NotificationProvider)
+        .options(selectinload(NotificationProvider.printers))
+        .where(NotificationProvider.id == provider_id)
+    )
     provider = result.scalar_one_or_none()
 
     if not provider:

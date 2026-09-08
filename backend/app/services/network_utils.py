@@ -3,6 +3,7 @@
 import ipaddress
 import json
 import logging
+import os
 import shutil
 import socket
 import struct
@@ -20,6 +21,48 @@ _IP_CMD: str | None = shutil.which("ip") or shutil.which("ip", path="/usr/sbin:/
 def _is_excluded(name: str) -> bool:
     """Check if an interface name should be excluded."""
     return any(name.startswith(prefix) for prefix in EXCLUDED_INTERFACE_PREFIXES)
+
+
+def parse_extra_subnets(raw: str | None = None) -> list[str]:
+    """Parse comma-separated CIDRs from DISCOVERY_EXTRA_SUBNETS (or ``raw``).
+
+    Invalid entries are skipped with a warning. Returns normalized CIDR strings.
+    """
+    value = raw if raw is not None else os.environ.get("DISCOVERY_EXTRA_SUBNETS", "")
+    if not value or not value.strip():
+        return []
+
+    result: list[str] = []
+    seen: set[str] = set()
+    for part in value.split(","):
+        cidr = part.strip()
+        if not cidr:
+            continue
+        try:
+            network = str(ipaddress.ip_network(cidr, strict=False))
+        except ValueError:
+            logger.warning("Ignoring invalid DISCOVERY_EXTRA_SUBNETS entry: %s", cidr)
+            continue
+        if network not in seen:
+            seen.add(network)
+            result.append(network)
+    return result
+
+
+def get_discovery_subnets() -> list[str]:
+    """Return local interface subnets plus any DISCOVERY_EXTRA_SUBNETS entries.
+
+    Extra subnets let operators scan printer VLANs that are reachable via
+    routing but not present as local interface addresses (e.g. host on
+    10.2.0.0/24 scanning printers on 10.0.0.0/24).
+    """
+    subnets = [iface["subnet"] for iface in get_network_interfaces()]
+    seen = set(subnets)
+    for network in parse_extra_subnets():
+        if network not in seen:
+            seen.add(network)
+            subnets.append(network)
+    return subnets
 
 
 def get_network_interfaces() -> list[dict]:

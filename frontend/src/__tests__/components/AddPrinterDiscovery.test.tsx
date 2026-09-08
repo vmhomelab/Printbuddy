@@ -109,16 +109,48 @@ describe('AddPrinterModal Discovery', () => {
     await userEvent.click(addButton);
 
     await waitFor(() => {
-      // Should show a select element (dropdown) with both subnets
+      // Should show a select element (dropdown) with both subnets + Custom
       const selectElement = screen.getByDisplayValue('192.168.1.0/24');
       expect(selectElement.tagName).toBe('SELECT');
 
-      // Both options should be available
       const options = selectElement.querySelectorAll('option');
-      expect(options).toHaveLength(2);
+      expect(options).toHaveLength(3);
       expect(options[0].textContent).toBe('192.168.1.0/24');
       expect(options[1].textContent).toBe('10.0.0.0/24');
+      expect(options[2].textContent).toMatch(/custom cidr/i);
     });
+  });
+
+  it('allows entering a custom CIDR when subnets are detected', async () => {
+    server.use(
+      http.get('/api/v1/discovery/info', () => {
+        return HttpResponse.json({
+          is_docker: true,
+          ssdp_running: false,
+          scan_running: false,
+          subnets: ['10.2.0.0/24'],
+        });
+      })
+    );
+
+    render(<PrintersPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('X1 Carbon')).toBeInTheDocument();
+    });
+
+    await userEvent.click(screen.getByText(/add printer/i));
+
+    await waitFor(() => {
+      expect(screen.getByDisplayValue('10.2.0.0/24')).toBeInTheDocument();
+    });
+
+    await userEvent.selectOptions(screen.getByDisplayValue('10.2.0.0/24'), '__custom__');
+
+    const textInput = await screen.findByPlaceholderText('192.168.1.0/24');
+    expect(textInput.tagName).toBe('INPUT');
+    await userEvent.type(textInput, '10.0.0.0/24');
+    expect(textInput).toHaveValue('10.0.0.0/24');
   });
 
   it('shows text input when no subnets detected in Docker mode', async () => {
@@ -179,5 +211,101 @@ describe('AddPrinterModal Discovery', () => {
     // Subnet field should not exist
     expect(screen.queryByPlaceholderText('192.168.1.0/24')).not.toBeInTheDocument();
     expect(screen.queryByDisplayValue('192.168.1.0/24')).not.toBeInTheDocument();
+  });
+
+  it('shows Moonraker subnet scan UI when Fluidd is selected', async () => {
+    server.use(
+      http.get('/api/v1/discovery/info', () => {
+        return HttpResponse.json({
+          is_docker: true,
+          ssdp_running: false,
+          scan_running: false,
+          moonraker_scan_running: false,
+          subnets: ['10.2.0.0/24', '10.0.0.0/24'],
+        });
+      })
+    );
+
+    render(<PrintersPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('X1 Carbon')).toBeInTheDocument();
+    });
+
+    await userEvent.click(screen.getByText(/add printer/i));
+
+    await waitFor(() => {
+      expect(screen.getByLabelText(/printer type/i)).toBeInTheDocument();
+    });
+
+    await userEvent.selectOptions(screen.getByLabelText(/printer type/i), 'fluidd');
+
+    await waitFor(() => {
+      expect(screen.getByText(/scan subnet for moonraker/i)).toBeInTheDocument();
+      expect(screen.getByDisplayValue('10.2.0.0/24')).toBeInTheDocument();
+    });
+  });
+
+  it('prefills Moonraker IP and API URL from scan result', async () => {
+    server.use(
+      http.get('/api/v1/discovery/info', () => {
+        return HttpResponse.json({
+          is_docker: true,
+          ssdp_running: false,
+          scan_running: false,
+          moonraker_scan_running: false,
+          subnets: ['10.0.0.0/24'],
+        });
+      }),
+      http.post('/api/v1/discovery/moonraker/scan', () => {
+        return HttpResponse.json({ running: true, scanned: 0, total: 1 });
+      }),
+      http.get('/api/v1/discovery/moonraker/scan/status', () => {
+        return HttpResponse.json({ running: false, scanned: 1, total: 1 });
+      }),
+      http.get('/api/v1/discovery/moonraker/printers', () => {
+        return HttpResponse.json([
+          {
+            serial: 'KLIPPER-10-0-0-42',
+            name: 'voron',
+            ip_address: '10.0.0.42',
+            api_url: 'http://10.0.0.42:7125',
+            needs_auth: false,
+            model: null,
+            discovered_at: '2026-08-05T00:00:00Z',
+          },
+        ]);
+      }),
+      http.post('/api/v1/discovery/moonraker/scan/stop', () => {
+        return HttpResponse.json({ running: false, scanned: 1, total: 1 });
+      }),
+    );
+
+    render(<PrintersPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('X1 Carbon')).toBeInTheDocument();
+    });
+
+    await userEvent.click(screen.getByText(/add printer/i));
+    await userEvent.selectOptions(screen.getByLabelText(/printer type/i), 'klipper');
+
+    await waitFor(() => {
+      expect(screen.getByText(/scan subnet for moonraker/i)).toBeInTheDocument();
+    });
+
+    await userEvent.click(screen.getByText(/scan subnet for moonraker/i));
+
+    await waitFor(() => {
+      expect(screen.getByText('voron')).toBeInTheDocument();
+    });
+
+    await userEvent.click(screen.getByText('voron'));
+
+    await waitFor(() => {
+      expect(screen.getByDisplayValue('10.0.0.42')).toBeInTheDocument();
+      expect(screen.getByDisplayValue('http://10.0.0.42:7125')).toBeInTheDocument();
+      expect(screen.getByDisplayValue('voron')).toBeInTheDocument();
+    });
   });
 });

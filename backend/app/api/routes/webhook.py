@@ -1,4 +1,6 @@
 import logging
+from dataclasses import asdict, is_dataclass
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -45,6 +47,11 @@ class PrinterStatusResponse(BaseModel):
     current_print: str | None
     progress: float | None
     remaining_time: int | None
+    layer_num: int | None = None
+    total_layers: int | None = None
+    hms_errors: list[dict[str, Any]] | None = None
+    subtask_id: str | None = None
+    serial_number: str | None = None
 
 
 class QueueStatusResponse(BaseModel):
@@ -53,6 +60,21 @@ class QueueStatusResponse(BaseModel):
     pending: int
     printing: int
     items: list[dict]
+
+
+def _serialize_hms_errors(errors: Any) -> list[dict[str, Any]]:
+    """Convert provider HMS error objects to API-safe dictionaries."""
+    serialized: list[dict[str, Any]] = []
+    for error in errors or []:
+        if isinstance(error, dict):
+            serialized.append(error)
+        elif is_dataclass(error):
+            serialized.append(asdict(error))
+        else:
+            serialized.append(
+                {key: getattr(error, key) for key in ("code", "attr", "module", "severity") if hasattr(error, key)}
+            )
+    return serialized
 
 
 # Webhook endpoints
@@ -196,10 +218,10 @@ async def webhook_stop_print(
     check_printer_access(api_key, printer_id)
 
     status = printer_manager.get_status(printer_id)
-    if not status or not status.get("connected"):
+    if not status or not status.connected:
         raise HTTPException(status_code=503, detail="Printer not connected")
 
-    if status.get("state") != "RUNNING":
+    if status.state != "RUNNING":
         raise HTTPException(status_code=409, detail="No print in progress")
 
     try:
@@ -224,10 +246,10 @@ async def webhook_cancel_print(
     check_printer_access(api_key, printer_id)
 
     status = printer_manager.get_status(printer_id)
-    if not status or not status.get("connected"):
+    if not status or not status.connected:
         raise HTTPException(status_code=503, detail="Printer not connected")
 
-    if status.get("state") not in ["RUNNING", "PAUSE"]:
+    if status.state not in ["RUNNING", "PAUSE"]:
         raise HTTPException(status_code=409, detail="No print to cancel")
 
     try:
@@ -263,11 +285,16 @@ async def webhook_get_printer_status(
     return PrinterStatusResponse(
         id=printer.id,
         name=printer.name,
-        connected=status.get("connected", False) if status else False,
-        state=status.get("state") if status else None,
-        current_print=status.get("current_print") if status else None,
-        progress=status.get("progress") if status else None,
-        remaining_time=status.get("remaining_time") if status else None,
+        connected=status.connected if status else False,
+        state=status.state if status else None,
+        current_print=status.current_print if status else None,
+        progress=status.progress if status else None,
+        remaining_time=status.remaining_time if status else None,
+        layer_num=getattr(status, "layer_num", None) if status else None,
+        total_layers=getattr(status, "total_layers", None) if status else None,
+        hms_errors=_serialize_hms_errors(getattr(status, "hms_errors", None)) if status else None,
+        subtask_id=getattr(status, "subtask_id", None) if status else None,
+        serial_number=printer.serial_number,
     )
 
 

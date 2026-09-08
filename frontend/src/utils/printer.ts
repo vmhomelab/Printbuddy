@@ -9,6 +9,7 @@ const MODEL_IMAGE_ALIASES: Array<[RegExp, string]> = [
   [/^(?:x1c|x1carbon|x1.*carbon.*)$/, 'x1c'],
   [/^x1$/, 'x1c'],
   [/^(?:x2d|n6)$/, 'x2d'],
+  [/^(?:a2l|n9|bambulaba2l)$/, 'a2l'],
   [/^h2dpro$/, 'h2dpro'],
   [/^h2d$/, 'h2d'],
   [/^h2c$/, 'h2c'],

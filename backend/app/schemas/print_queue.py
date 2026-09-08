@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, PlainSerializer
+from pydantic import BaseModel, PlainSerializer, model_validator
 
 
 # Custom serializer to ensure UTC datetimes have Z suffix
@@ -28,6 +28,7 @@ class PrintQueueItemCreate(BaseModel):
     require_previous_success: bool = False
     auto_off_after: bool = False  # Power off printer after print completes
     manual_start: bool = False  # Requires manual trigger to start (staged)
+    skip_filament_check: bool = False  # Persistent Print Anyway acknowledgement
     # AMS mapping: list of global tray IDs for each filament slot
     # Format: [5, -1, 2, -1] where position = slot_id-1, value = global tray ID (-1 = unused)
     ams_mapping: list[int] | None = None
@@ -93,6 +94,7 @@ class PrintQueueItemResponse(BaseModel):
     # (#1496). Display-only — the ▶ click recomputes deficit against live
     # spool state.
     filament_short: bool = False
+    skip_filament_check: bool = False
     ams_mapping: list[int] | None = None
     plate_id: int | None = None  # Plate ID for multi-plate 3MF files
     # Print options
@@ -164,6 +166,14 @@ class PrintQueueReorderItem(BaseModel):
 
 class PrintQueueReorder(BaseModel):
     items: list[PrintQueueReorderItem]
+
+    @model_validator(mode="after")
+    def _validate_positions_unique(self) -> "PrintQueueReorder":
+        positions = [item.position for item in self.items]
+        if len(positions) != len(set(positions)):
+            duplicates = sorted({pos for pos in positions if positions.count(pos) > 1})
+            raise ValueError(f"Duplicate positions in reorder request: {duplicates}")
+        return self
 
 
 class PrintQueueBulkUpdate(BaseModel):

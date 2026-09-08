@@ -41,6 +41,61 @@ GENERIC_FILAMENT_IDS: dict[str, str] = {
     "PETG HF": "GFG96",
 }
 
+_COMPOSITE_VARIANT_ALIASES: dict[str, tuple[str, ...]] = {
+    "CF": ("CF", "CARBON FIBER", "CARBON FIBRE"),
+}
+
+
+def _contains_variant_alias(value: str, variant: str) -> bool:
+    normalized = value.upper().replace("_", " ").replace("-", " ")
+    tokens = set(normalized.split())
+    if variant in tokens:
+        return True
+    return any(alias in normalized for alias in _COMPOSITE_VARIANT_ALIASES.get(variant, ()))
+
+
+def _candidate_with_variant(material: str, variant: str) -> str:
+    for suffix in (f"-{variant}", f" {variant}", f"_{variant}"):
+        if material.endswith(suffix):
+            return f"{material[: -len(suffix)].strip(' -_')}-{variant}"
+    return f"{material}-{variant}"
+
+
+def effective_bambu_material(material: str | None, subtype: str | None = None) -> str:
+    """Return the Bambu-facing material type for AMS configuration.
+
+    Printbuddy and Spoolman can store composite materials either as a real
+    material (``PLA-CF``) or as base material + variant (``PLA`` + ``CF``).
+    The Bambu AMS command must use the composite material in ``tray_type``;
+    otherwise the printer reports plain ``PLA`` and 3MF AMS mapping for
+    ``PLA-CF`` cannot match it.
+    """
+    mat = (material or "").strip().upper()
+    sub = (subtype or "").strip().upper()
+    if not mat:
+        return ""
+
+    if mat in GENERIC_FILAMENT_IDS and "-" in mat:
+        return mat
+
+    for variant in _COMPOSITE_VARIANT_ALIASES:
+        if _contains_variant_alias(mat, variant):
+            candidate = _candidate_with_variant(mat, variant)
+            if candidate in GENERIC_FILAMENT_IDS:
+                return candidate
+        if sub and _contains_variant_alias(sub, variant):
+            candidate = f"{mat}-{variant}"
+            if candidate in GENERIC_FILAMENT_IDS:
+                return candidate
+
+    return mat
+
+
+def generic_bambu_filament_id(material: str | None, subtype: str | None = None) -> str:
+    """Return the generic Bambu filament_id for a material, if known."""
+    effective = effective_bambu_material(material, subtype)
+    return GENERIC_FILAMENT_IDS.get(effective) or GENERIC_FILAMENT_IDS.get(effective.split("-")[0].split(" ")[0]) or ""
+
 
 def filament_id_to_setting_id(filament_id: str) -> str:
     """Convert filament_id → setting_id (e.g. "GFL05" → "GFSL05").

@@ -65,6 +65,11 @@ class PrintQueueItem(Base):
     # Auto-print G-code injection (#422)
     gcode_injection: Mapped[bool] = mapped_column(Boolean, default=False)
 
+    # How many times the start watchdog has reverted this item from 'printing'
+    # back to 'pending'. Bounds retry loops when a printer accepts upload but
+    # never acknowledges the start command.
+    dispatch_attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+
     # Print options
     bed_levelling: Mapped[bool] = mapped_column(Boolean, default=True)
     print_platform_type: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -77,12 +82,26 @@ class PrintQueueItem(Base):
     # Status: pending, printing, completed, failed, skipped, cancelled
     status: Mapped[str] = mapped_column(String(20), default="pending")
 
+    # Set while the scheduler is actively uploading/dispatching this pending
+    # row. Edit routes reject changes while claimed so printer_id/options cannot
+    # diverge from an in-flight upload.
+    dispatching_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    # Cleared by a resume-after-failure action so require_previous_success can
+    # skip an acknowledged failed row.
+    gate_acknowledged: Mapped[bool] = mapped_column(Boolean, default=False)
+
     # Set by the dispatch scheduler when the assigned spool can't satisfy
     # this print's per-slot filament weight (#1496). Display-only flag — the
     # actual deficit is recomputed live every time the user clicks ▶, so
     # swapping a spool to a fuller one between flag and dispatch clears the
     # block automatically.
     filament_short: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    # User has acknowledged the filament-shortage warning for this item
+    # ("Print Anyway"). Survives scheduler ticks so the item is not immediately
+    # re-promoted to manual_start after the operator confirms dispatch.
+    skip_filament_check: Mapped[bool] = mapped_column(Boolean, default=False)
 
     # Tracking
     started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

@@ -28,7 +28,12 @@ export function NotificationProviderCard({ provider, onEdit }: NotificationProvi
     queryFn: api.getPrinters,
   });
 
-  const linkedPrinter = printers?.find(p => p.id === provider.printer_id);
+  const selectedPrinterIds = provider.printer_ids?.length
+    ? provider.printer_ids
+    : provider.printer_id
+      ? [provider.printer_id]
+      : [];
+  const linkedPrinters = printers?.filter((p) => selectedPrinterIds.includes(p.id)) ?? [];
 
   // Update mutation
   const updateMutation = useMutation({
@@ -99,14 +104,18 @@ export function NotificationProviderCard({ provider, onEdit }: NotificationProvi
           </div>
 
           {provider.enabled && (<>
-          {/* Linked Printer */}
-          {linkedPrinter && (
+          {/* Printer Scope */}
+          {selectedPrinterIds.length > 0 && (
             <div className="mb-3 px-2 py-1.5 bg-bambu-dark rounded-lg">
               <span className="text-xs text-bambu-gray">{t('notifications.printer')} </span>
-              <span className="text-sm text-white">{linkedPrinter.name}</span>
+              <span className="text-sm text-white">
+                {linkedPrinters.length > 0
+                  ? linkedPrinters.map((printer) => printer.name).join(', ')
+                  : `${selectedPrinterIds.length} selected printers`}
+              </span>
             </div>
           )}
-          {!linkedPrinter && !provider.printer_id && (
+          {selectedPrinterIds.length === 0 && (
             <div className="mb-3 px-2 py-1.5 bg-bambu-dark rounded-lg">
               <span className="text-xs text-bambu-gray">{t('notifications.allPrinters')}</span>
             </div>

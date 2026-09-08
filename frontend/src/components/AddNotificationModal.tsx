@@ -12,7 +12,7 @@ interface AddNotificationModalProps {
   onClose: () => void;
 }
 
-const PROVIDER_VALUES: ProviderType[] = ['email', 'telegram', 'discord', 'ntfy', 'pushover', 'callmebot', 'webhook', 'homeassistant'];
+const PROVIDER_VALUES: ProviderType[] = ['email', 'telegram', 'discord', 'ntfy', 'pushover', 'callmebot', 'webhook', 'homeassistant', 'notify'];
 
 export function AddNotificationModal({ provider, onClose }: AddNotificationModalProps) {
   const { t } = useTranslation();
@@ -21,7 +21,13 @@ export function AddNotificationModal({ provider, onClose }: AddNotificationModal
 
   const [name, setName] = useState(provider?.name || '');
   const [providerType, setProviderType] = useState<ProviderType>(provider?.provider_type || 'email');
-  const [printerId, setPrinterId] = useState<number | null>(provider?.printer_id || null);
+  const initialPrinterIds = provider?.printer_ids?.length
+    ? provider.printer_ids
+    : provider?.printer_id
+      ? [provider.printer_id]
+      : [];
+  const [printerFilterMode, setPrinterFilterMode] = useState<'all' | 'selected'>(initialPrinterIds.length > 0 ? 'selected' : 'all');
+  const [selectedPrinterIds, setSelectedPrinterIds] = useState<number[]>(initialPrinterIds);
   const [quietHoursEnabled, setQuietHoursEnabled] = useState(provider?.quiet_hours_enabled || false);
   const [quietHoursStart, setQuietHoursStart] = useState(provider?.quiet_hours_start || '22:00');
   const [quietHoursEnd, setQuietHoursEnd] = useState(provider?.quiet_hours_end || '07:00');
@@ -135,6 +141,11 @@ export function AddNotificationModal({ provider, onClose }: AddNotificationModal
       return;
     }
 
+    if (printerFilterMode === 'selected' && selectedPrinterIds.length === 0) {
+      setError(t('notifications.selectAtLeastOnePrinter', 'Select at least one printer or choose All printers.'));
+      return;
+    }
+
     // Validate provider-specific config
     const requiredFields = getRequiredFields(providerType);
     for (const field of requiredFields) {
@@ -153,7 +164,8 @@ export function AddNotificationModal({ provider, onClose }: AddNotificationModal
       name: name.trim(),
       provider_type: providerType,
       config: finalConfig,
-      printer_id: printerId,
+      printer_id: null,
+      printer_ids: printerFilterMode === 'selected' ? selectedPrinterIds : [],
       quiet_hours_enabled: quietHoursEnabled,
       quiet_hours_start: quietHoursEnabled ? quietHoursStart : null,
       quiet_hours_end: quietHoursEnabled ? quietHoursEnd : null,
@@ -249,6 +261,26 @@ export function AddNotificationModal({ provider, onClose }: AddNotificationModal
         return [
           { key: 'service', label: 'Home Assistant Service', placeholder: 'notify.mobile_app_myphone', type: 'text', required: false },
         ];
+      case 'notify':
+        return [
+          { key: 'device_id', label: 'Device ID', placeholder: 'ABCD1234', type: 'text', required: true },
+          { key: 'device_token', label: 'Device Token', placeholder: 'Your Notify device token', type: 'password', required: true },
+          { key: 'base_url', label: 'Gateway URL', placeholder: 'https://push.getnotifyapp.com', type: 'text', required: false },
+          { key: 'live_activities_enabled', label: 'Live Activities', type: 'select', required: false, options: [
+            { value: 'false', label: 'Disabled' },
+            { value: 'true', label: 'Enabled' },
+          ]},
+          { key: 'live_activity_compact_display', label: 'Dynamic Island Display', type: 'select', required: false, options: [
+            { value: 'progress', label: 'Percent / layer' },
+            { value: 'eta', label: 'Time remaining' },
+          ]},
+          { key: 'live_activity_native_tile_countdown', label: 'Advanced Options: Use native countdown on tile', type: 'select', required: false, helperText: 'May cause dynamic island to look messy, depending on printing time', options: [
+            { value: 'false', label: 'Disabled' },
+            { value: 'true', label: 'Enabled' },
+          ]},
+          { key: 'live_activity_keepalive_seconds', label: 'Live Activity Keepalive Seconds', placeholder: '60', type: 'number', required: false },
+          { key: 'live_activity_end_keep_for_seconds', label: 'Keep Final Tile Seconds', placeholder: '300', type: 'number', required: false },
+        ];
       default:
         return [];
     }
@@ -331,13 +363,16 @@ export function AddNotificationModal({ provider, onClose }: AddNotificationModal
             <p className="text-sm text-bambu-gray">{t('notifications.configuration')}</p>
             {configFields
               .filter((field) => !('showIf' in field) || (field as { showIf?: (cfg: Record<string, string>) => boolean }).showIf?.(config) !== false)
-              .map((field) => (
+              .map((field) => {
+                const fieldId = `notification-config-${field.key}`;
+                return (
               <div key={field.key}>
-                <label className="block text-sm text-bambu-gray mb-1">
+                <label htmlFor={fieldId} className="block text-sm text-bambu-gray mb-1">
                   {field.label} {field.required && '*'}
                 </label>
                 {field.type === 'select' && 'options' in field && field.options ? (
                   <select
+                    id={fieldId}
                     value={config[field.key] || field.options[0]?.value || ''}
                     onChange={(e) => {
                       setConfig({ ...config, [field.key]: e.target.value });
@@ -353,6 +388,7 @@ export function AddNotificationModal({ provider, onClose }: AddNotificationModal
                   </select>
                 ) : (
                   <input
+                    id={fieldId}
                     type={field.type}
                     value={config[field.key] || ''}
                     onChange={(e) => {
@@ -363,8 +399,12 @@ export function AddNotificationModal({ provider, onClose }: AddNotificationModal
                     className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
                   />
                 )}
+                {'helperText' in field && field.helperText && (
+                  <p className="text-xs text-amber-300 mt-1">{field.helperText}</p>
+                )}
               </div>
-            ))}
+                );
+              })}
           </div>
 
           {/* Test Button */}
@@ -409,23 +449,56 @@ export function AddNotificationModal({ provider, onClose }: AddNotificationModal
             </div>
           )}
 
-          {/* Link to Printer */}
+          {/* Printer Filter */}
           <div>
-            <label className="block text-sm text-bambu-gray mb-1">{t('notifications.printerFilter')}</label>
+            <label htmlFor="notification-printer-filter" className="block text-sm text-bambu-gray mb-1">{t('notifications.printerFilter')}</label>
             <select
-              value={printerId ?? ''}
-              onChange={(e) => setPrinterId(e.target.value ? Number(e.target.value) : null)}
+              id="notification-printer-filter"
+              value={printerFilterMode}
+              onChange={(e) => {
+                const mode = e.target.value as 'all' | 'selected';
+                setPrinterFilterMode(mode);
+                if (mode === 'all') {
+                  setSelectedPrinterIds([]);
+                }
+              }}
               className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
             >
-              <option value="">{t('notifications.allPrinters')}</option>
-              {printers?.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
+              <option value="all">{t('notifications.allPrinters')}</option>
+              <option value="selected">{t('notifications.selectedPrinters', 'Selected printers')}</option>
             </select>
+            {printerFilterMode === 'selected' && (
+              <div className="mt-2 space-y-2 max-h-40 overflow-y-auto rounded-lg border border-bambu-dark-tertiary bg-bambu-dark p-2">
+                {printers?.length ? (
+                  printers.map((p) => {
+                    const checked = selectedPrinterIds.includes(p.id);
+                    return (
+                      <label key={p.id} className="flex items-center gap-2 text-sm text-white cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={(e) => {
+                            setSelectedPrinterIds((current) =>
+                              e.target.checked
+                                ? Array.from(new Set([...current, p.id]))
+                                : current.filter((id) => id !== p.id),
+                            );
+                          }}
+                          className="h-4 w-4 rounded border-bambu-dark-tertiary bg-bambu-dark text-bambu-green focus:ring-bambu-green"
+                        />
+                        <span>{p.name}</span>
+                      </label>
+                    );
+                  })
+                ) : (
+                  <p className="text-xs text-bambu-gray">{t('notifications.noPrintersAvailable', 'No printers available')}</p>
+                )}
+              </div>
+            )}
             <p className="text-xs text-bambu-gray mt-1">
-              {t('notifications.onlyFromPrinter')}
+              {printerFilterMode === 'selected'
+                ? t('notifications.onlyFromSelectedPrinters', 'Only send notifications for events from the selected printers')
+                : t('notifications.fromAllPrinters', 'Send notifications for events from all printers')}
             </p>
           </div>
 

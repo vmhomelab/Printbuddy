@@ -1594,8 +1594,8 @@ class TestEncryptionStatusEndpoint:
 
     @pytest.mark.asyncio
     @pytest.mark.integration
-    async def test_status_returns_503_when_auth_state_check_fails_closed(self, async_client, monkeypatch):
-        """A8: auth-state SQLAlchemyError fails closed before route handling."""
+    async def test_status_returns_503_on_db_error(self, async_client, monkeypatch):
+        """A8: authentication DB failure while checking status fails closed with 503."""
         from unittest.mock import AsyncMock
 
         from sqlalchemy.exc import SQLAlchemyError
@@ -1609,7 +1609,7 @@ class TestEncryptionStatusEndpoint:
 
         resp = await async_client.get(self.STATUS_URL, headers={"Authorization": f"Bearer {token}"})
         assert resp.status_code == 503
-        assert resp.json().get("detail") == "Authentication state unavailable"
+        assert "authentication state" in resp.json().get("detail", "").lower()
 
     @pytest.mark.asyncio
     @pytest.mark.integration

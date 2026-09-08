@@ -40,6 +40,23 @@ def _write_dummy_cert_pair(tmp_path: Path) -> tuple[Path, Path]:
     return cert_path, key_path
 
 
+def test_a2l_virtual_printer_registry():
+    """Virtual Printer mode must advertise A2L with the Bambu Studio N9 model code."""
+    from backend.app.services.virtual_printer.manager import (
+        DISPLAY_NAME_TO_MODEL_CODE,
+        MODEL_SERIAL_PREFIXES,
+        VIRTUAL_PRINTER_MODELS,
+        _get_serial_for_model,
+    )
+    from backend.app.services.virtual_printer.mqtt_server import MODEL_PRODUCT_NAMES
+
+    assert VIRTUAL_PRINTER_MODELS["N9"] == "A2L"
+    assert DISPLAY_NAME_TO_MODEL_CODE["A2L"] == "N9"
+    assert MODEL_SERIAL_PREFIXES["N9"] == "26A19"
+    assert _get_serial_for_model("N9", "12345") == "26A1912345"
+    assert MODEL_PRODUCT_NAMES["N9"] == "A2L"
+
+
 def _raise_cancelled_start_server(captured: dict):
     async def fake_start_server(*args, **kwargs):
         captured["ssl"] = kwargs.get("ssl")

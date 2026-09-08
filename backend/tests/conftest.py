@@ -114,6 +114,7 @@ async def test_engine():
         kprofile_note,
         maintenance,
         notification,
+        notification_live_activity,
         notification_template,
         oidc_provider,
         pending_slot_assignment,  # noqa: F401

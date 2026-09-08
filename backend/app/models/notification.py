@@ -2,10 +2,18 @@
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Table, Text
 from sqlalchemy.orm import relationship
 
 from backend.app.core.database import Base
+
+
+notification_provider_printers = Table(
+    "notification_provider_printers",
+    Base.metadata,
+    Column("provider_id", Integer, ForeignKey("notification_providers.id", ondelete="CASCADE"), primary_key=True),
+    Column("printer_id", Integer, ForeignKey("printers.id", ondelete="CASCADE"), primary_key=True),
+)
 
 
 class NotificationDigestQueue(Base):
@@ -111,7 +119,7 @@ class NotificationProvider(Base):
     daily_digest_enabled = Column(Boolean, default=False)
     daily_digest_time = Column(String(5), nullable=True)  # HH:MM format, e.g., "08:00"
 
-    # Optional: Link to specific printer (NULL = all printers)
+    # Optional legacy single-printer filter (NULL = all printers unless printers has selected rows)
     printer_id = Column(Integer, ForeignKey("printers.id", ondelete="SET NULL"), nullable=True)
 
     # Status tracking
@@ -125,5 +133,6 @@ class NotificationProvider(Base):
 
     # Relationships
     printer = relationship("Printer", back_populates="notification_providers")
+    printers = relationship("Printer", secondary=notification_provider_printers, lazy="selectin")
     logs = relationship("NotificationLog", back_populates="provider", cascade="all, delete-orphan")
     digest_queue = relationship("NotificationDigestQueue", back_populates="provider", cascade="all, delete-orphan")

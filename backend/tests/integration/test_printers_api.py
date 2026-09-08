@@ -1439,6 +1439,43 @@ class TestConfigureAMSSlotAPI:
 
     @pytest.mark.asyncio
     @pytest.mark.integration
+    async def test_configure_empty_id_with_cf_profile_uses_composite_generic(
+        self, async_client: AsyncClient, printer_factory
+    ):
+        """Direct slot configure treats tray_type=PLA + profile label CF as PLA-CF."""
+        printer = await printer_factory(name="P1S")
+
+        mock_client = MagicMock()
+        mock_client.ams_set_filament_setting.return_value = True
+        mock_client.extrusion_cali_sel.return_value = True
+        mock_client.request_status_update.return_value = True
+
+        mock_status = MagicMock()
+        mock_status.raw_data = {"ams": {"ams": []}}
+
+        with patch("backend.app.api.routes.printers.printer_manager") as mock_pm:
+            mock_pm.get_client.return_value = mock_client
+            mock_pm.get_status.return_value = mock_status
+
+            response = await async_client.post(
+                f"/api/v1/printers/{printer.id}/slots/0/0/configure",
+                params={
+                    "tray_info_idx": "",
+                    "tray_type": "PLA",
+                    "tray_sub_brands": "Generic PLA CF",
+                    "tray_color": "000000FF",
+                    "nozzle_temp_min": 210,
+                    "nozzle_temp_max": 240,
+                },
+            )
+
+            assert response.status_code == 200
+            call_kwargs = mock_client.ams_set_filament_setting.call_args
+            assert call_kwargs.kwargs["tray_type"] == "PLA-CF"
+            assert call_kwargs.kwargs["tray_info_idx"] == "GFL98"
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
     async def test_configure_pfus_preserves_setting_id_pair(self, async_client: AsyncClient, printer_factory):
         """Both tray_info_idx=PFUS* and setting_id=PFUS* are forwarded untouched.
 

@@ -32,6 +32,14 @@ describe('getPrinterImage', () => {
     });
   });
 
+  describe('A2L', () => {
+    it('resolves display name and SSDP code to a2l.png', () => {
+      expect(getPrinterImage('A2L')).toBe('/img/printers/a2l.png');
+      expect(getPrinterImage('N9')).toBe('/img/printers/a2l.png');
+      expect(getPrinterImage('Bambu Lab A2L')).toBe('/img/printers/a2l.png');
+    });
+  });
+
   describe('regression: existing families unchanged', () => {
     it('X1C → x1c.png', () => {
       expect(getPrinterImage('X1C')).toBe('/img/printers/x1c.png');

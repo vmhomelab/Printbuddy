@@ -107,6 +107,37 @@ class TestX2DModel:
         assert "N6" in STEEL_ROD_MODELS
 
 
+class TestA2LModel:
+    """A2L support: A2 Series, chamber-image camera, linear rail, single nozzle."""
+
+    def test_a2l_model_map(self):
+        assert normalize_printer_model("Bambu Lab A2L") == "A2L"
+
+    def test_a2l_model_id_map(self):
+        assert normalize_printer_model_id("N9") == "A2L"
+
+    @pytest.mark.parametrize("model", ["A2L", "N9"])
+    def test_a2l_is_linear_rail(self, model: str):
+        assert get_rod_type(model) == "linear_rail"
+
+    @pytest.mark.parametrize("model", ["A2L", "N9"])
+    def test_a2l_has_no_ethernet(self, model: str):
+        assert has_ethernet(model) is False
+
+    @pytest.mark.parametrize("model", ["A2L", "N9"])
+    def test_a2l_is_single_nozzle(self, model: str):
+        assert is_dual_nozzle_model(model) is False
+
+    @pytest.mark.parametrize("model", ["A2L", "N9"])
+    def test_a2l_uses_chamber_image_camera(self, model: str):
+        assert supports_rtsp(model) is False
+        assert get_camera_port(model) == 6000
+
+    def test_a1_internal_model_ids_match_bambu_studio_codes(self):
+        assert normalize_printer_model_id("N2S") == "A1"
+        assert normalize_printer_model_id("N1") == "A1 Mini"
+
+
 class TestDualNozzleModel:
     """is_dual_nozzle_model — the single source of truth for nozzle class,
     consumed by start_print, the K-profile routes, and the re-slice guard."""
