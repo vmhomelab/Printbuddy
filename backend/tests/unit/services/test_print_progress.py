@@ -2,7 +2,7 @@
 
 from types import SimpleNamespace
 
-from backend.app.services.print_progress import effective_print_progress, is_pre_print_stage
+from backend.app.services.print_progress import effective_print_progress, is_pre_print_stage, live_activity_progress
 
 
 def test_raw_bambu_pre_print_payload_reports_zero_actual_progress():
@@ -41,3 +41,15 @@ def test_raw_progress_is_preserved_when_layers_are_unknown_and_not_pre_print():
     state = SimpleNamespace(progress=42, layer_num=0, total_layers=0, stg_cur=0)
 
     assert effective_print_progress(state) == 42
+
+
+def test_live_activity_progress_matches_ui_firmware_percent_after_printing_starts():
+    state = SimpleNamespace(progress=14, layer_num=81, total_layers=895, stg_cur=0)
+
+    assert live_activity_progress(state) == 14
+
+
+def test_live_activity_progress_stays_zero_during_pre_print_stage():
+    state = SimpleNamespace(progress=14, layer_num=0, total_layers=895, stg_cur=2)
+
+    assert live_activity_progress(state) == 0

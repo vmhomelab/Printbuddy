@@ -60,6 +60,26 @@ def effective_print_progress(state: Any) -> float:
     return round(min(max(_number(_get(state, "progress"), default=0), 0), 100), 2)
 
 
+def live_activity_progress(state: Any) -> float:
+    """Return the progress percentage shown by Printbuddy's live UI.
+
+    The UI displays the provider/firmware progress value. Keep pre-print
+    suppression so preparation does not appear as model progress, but once the
+    print has started use that same value for Live Activities instead of
+    deriving a different percentage from layer counts.
+    """
+    layer_num = _number(_get(state, "layer_num"), default=0)
+    progress = _get(state, "progress")
+    if progress is None:
+        total_layers = _number(_get(state, "total_layers"), default=0)
+        if layer_num > 0 and total_layers > 0:
+            return round(min(max((layer_num / total_layers) * 100, 0), 100), 2)
+        return 0
+    if layer_num <= 0 and is_pre_print_stage(state):
+        return 0
+    return round(min(max(_number(progress, default=0), 0), 100), 2)
+
+
 def is_pre_print_stage(state: Any) -> bool:
     """Return whether state is in a known Bambu pre-print preparation stage."""
     stage = _optional_int(_get(state, "stg_cur"))

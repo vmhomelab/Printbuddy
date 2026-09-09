@@ -834,12 +834,12 @@ async def test_keepalive_updates_active_activity_from_current_printer_state(db_s
 
     client.update.assert_awaited_once()
     payload = client.update.await_args.args[1]
-    assert payload["progress"] == 32
+    assert payload["progress"] == 64
     assert payload["endsIn"] is None
     assert payload["trailing"] == "45:00"
-    assert payload["status"] == "32%"
+    assert payload["status"] == "64%"
     await db_session.refresh(activity)
-    assert activity.last_progress == 32
+    assert activity.last_progress == 64
     assert activity.last_remaining_time == 2700
 
 
@@ -886,7 +886,7 @@ async def test_keepalive_creates_missing_activity_for_running_printer(db_session
     client.start.assert_awaited_once()
     payload = client.start.await_args.args[0]
     assert payload["title"] == "Workshop P1S"
-    assert payload["progress"] == 0.78
+    assert payload["progress"] == 35
     activity = await db_session.scalar(select(NotificationLiveActivity))
     assert activity is not None
     assert activity.provider_id == notify_provider.id

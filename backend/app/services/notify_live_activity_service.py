@@ -22,7 +22,7 @@ from backend.app.services.notify_live_activity_content import (
     build_start_content,
     build_update_content,
 )
-from backend.app.services.print_progress import effective_print_progress
+from backend.app.services.print_progress import live_activity_progress
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +65,7 @@ class NotifyLiveActivityService:
 
         filename = self._filename(data)
         remaining_time = self._remaining_time(data, archive_data=archive_data)
-        progress = effective_print_progress(data)
+        progress = live_activity_progress(data)
         layer_num = self._optional_int(data.get("layer_num"))
         total_layers = self._optional_int(data.get("total_layers"))
         subtask_id = self._subtask_id(data)
@@ -449,7 +449,7 @@ class NotifyLiveActivityService:
                     getattr(state, "subtask_name", None) or getattr(state, "current_print", None) or activity.filename
                 )
                 remaining_time = self._state_remaining_time_seconds(state)
-                progress = effective_print_progress(state)
+                progress = live_activity_progress(state)
                 layer_num = self._optional_int(getattr(state, "layer_num", None))
                 total_layers = self._optional_int(getattr(state, "total_layers", None))
                 payload = build_update_content(
@@ -553,7 +553,7 @@ class NotifyLiveActivityService:
     ) -> None:
         filename = getattr(state, "subtask_name", None) or getattr(state, "current_print", None) or "Unknown print"
         subtask_id = getattr(state, "subtask_id", None)
-        progress = effective_print_progress(state)
+        progress = live_activity_progress(state)
         remaining_time = self._state_remaining_time_seconds(state)
         layer_num = self._optional_int(getattr(state, "layer_num", None))
         total_layers = self._optional_int(getattr(state, "total_layers", None))

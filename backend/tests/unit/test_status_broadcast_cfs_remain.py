@@ -158,7 +158,7 @@ async def test_live_activity_updates_on_layer_change_without_progress_milestone(
         printer_id=printer_id,
         printer_name="Bambu Lab P1S",
         filename="half_test_cube",
-        progress=5.36,
+        progress=6,
         remaining_time=360,
         subtask_id="1057596979",
         layer_num=3,
@@ -213,7 +213,7 @@ async def test_disconnected_running_state_does_not_update_live_activity_from_sta
 
 @pytest.mark.asyncio
 async def test_milestone_notification_does_not_send_second_live_activity_update():
-    """Milestone push notifications must not overwrite real Live Activity layer progress."""
+    """Milestone push notifications must not overwrite the UI-aligned Live Activity progress."""
 
     printer_id = 5353
     main._last_status_broadcast.pop(printer_id, None)
@@ -259,7 +259,7 @@ async def test_milestone_notification_does_not_send_second_live_activity_update(
         printer_id=printer_id,
         printer_name="Bambu Lab P1S",
         filename="half_test_cube",
-        progress=51.79,
+        progress=52,
         remaining_time=360,
         subtask_id="1057596979",
         layer_num=29,

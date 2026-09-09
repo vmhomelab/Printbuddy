@@ -96,7 +96,7 @@ from backend.app.services.mqtt_smart_plug import mqtt_smart_plug_service
 from backend.app.services.notification_service import notification_service
 from backend.app.services.notify_live_activity_service import notify_live_activity_service
 from backend.app.services.obico_detection import obico_detection_service
-from backend.app.services.print_progress import effective_print_progress
+from backend.app.services.print_progress import effective_print_progress, live_activity_progress
 from backend.app.services.print_scheduler import scheduler as print_scheduler
 from backend.app.services.printer_manager import (
     init_printer_connections,
@@ -1376,6 +1376,7 @@ async def on_printer_status_change(printer_id: int, state: PrinterState):
     logger = logging.getLogger(__name__)
     raw_progress = state.progress or 0
     progress = effective_print_progress(state)
+    activity_progress = live_activity_progress(state)
     is_printing = bool(state.connected) and state.state in ("RUNNING", "PRINTING")
     provider = _provider_name_for_progress(printer_id)
 
@@ -1412,7 +1413,7 @@ async def on_printer_status_change(printer_id: int, state: PrinterState):
                     printer_id=printer_id,
                     printer_name=printer_name,
                     filename=filename,
-                    progress=progress,
+                    progress=activity_progress,
                     remaining_time=remaining_time_seconds,
                     subtask_id=state.subtask_id,
                     layer_num=state.layer_num,
