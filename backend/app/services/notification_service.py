@@ -733,10 +733,7 @@ class NotificationService:
 
         if printer_id is not None:
             query = query.where(
-                (
-                    NotificationProvider.printer_id.is_(None)
-                    & ~NotificationProvider.printers.any()
-                )
+                (NotificationProvider.printer_id.is_(None) & ~NotificationProvider.printers.any())
                 | (NotificationProvider.printer_id == printer_id)
                 | NotificationProvider.printers.any(id=printer_id)
             )

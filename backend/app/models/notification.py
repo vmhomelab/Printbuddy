@@ -7,7 +7,6 @@ from sqlalchemy.orm import relationship
 
 from backend.app.core.database import Base
 
-
 notification_provider_printers = Table(
     "notification_provider_printers",
     Base.metadata,
