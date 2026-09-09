@@ -158,6 +158,19 @@ describe('PrintersPage', () => {
       });
     });
 
+    it('closes a printer card menu when clicking elsewhere in the UI', async () => {
+      const user = userEvent.setup();
+      render(<PrintersPage />);
+
+      const card = await screen.findByTestId('printer-card-1');
+      await user.click(within(card).getByRole('button', { name: 'Open menu' }));
+      expect(within(card).getByRole('button', { name: 'Edit' })).toBeInTheDocument();
+
+      await user.click(screen.getByRole('heading', { name: 'Printers' }));
+
+      expect(within(card).queryByRole('button', { name: 'Edit' })).not.toBeInTheDocument();
+    });
+
     it('shows every Snapmaker U1 nozzle temperature, active tool, and chamber temperature', async () => {
       server.use(
         http.get('/api/v1/printers/', () => HttpResponse.json([{

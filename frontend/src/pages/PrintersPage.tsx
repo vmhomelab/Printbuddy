@@ -1939,6 +1939,7 @@ function PrinterCard({
   const { showToast } = useToast();
   const { hasPermission } = useAuth();
   const [showMenu, setShowMenu] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleteArchives, setDeleteArchives] = useState(true);
   const [showEditModal, setShowEditModal] = useState(false);
@@ -2027,6 +2028,19 @@ function PrinterCard({
   const [editingRoi, setEditingRoi] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
   const [isSavingRoi, setIsSavingRoi] = useState(false);
   const [plateCheckLightWasOff, setPlateCheckLightWasOff] = useState(false);
+
+  useEffect(() => {
+    if (!showMenu) return;
+
+    const handleClickOutside = (event: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+        setShowMenu(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [showMenu]);
 
   const { data: status } = useQuery({
     queryKey: ['printerStatus', printer.id],
@@ -3372,16 +3386,19 @@ function PrinterCard({
               </div>
             </div>
             {/* Menu button */}
-            <div className="relative flex-shrink-0">
+            <div ref={menuRef} className="relative flex-shrink-0">
               <Button
                 variant="ghost"
                 size="sm"
                 onClick={() => setShowMenu(!showMenu)}
+                aria-label={t('layout.openMenu')}
+                aria-haspopup="menu"
+                aria-expanded={showMenu}
               >
                 <MoreVertical className="w-4 h-4" />
               </Button>
               {showMenu && (
-                <div className="absolute right-0 mt-2 w-48 bg-bambu-dark-secondary border border-bambu-dark-tertiary rounded-lg shadow-lg z-20">
+                <div role="menu" className="absolute right-0 mt-2 w-48 bg-bambu-dark-secondary border border-bambu-dark-tertiary rounded-lg shadow-lg z-20">
                   <button
                     className={`w-full px-4 py-2 text-left text-sm flex items-center gap-2 ${
                       hasPermission('printers:update')
