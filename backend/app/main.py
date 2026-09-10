@@ -364,6 +364,10 @@ PRINT_ALMOST_DONE_PROGRESS_THRESHOLD = 97
 
 # Track whether the almost-done notification has been sent for current print
 _print_almost_done_notified: dict[int, bool] = {}
+# Track the last UI-aligned progress sample for the current print. Almost-done
+# is a threshold-crossing event; a new job's first sample may still contain
+# stale final progress/layer data from the previous print.
+_print_almost_done_last_progress: dict[int, float] = {}
 
 # Track whether first layer complete notification has been sent for current print
 _first_layer_notified: dict[int, bool] = {}
@@ -1232,6 +1236,7 @@ def _reset_progress_notification_tracking(printer_id: int, *, clear_job_key: boo
     _last_progress_milestone[printer_id] = 0
     _pending_progress_milestone.pop(printer_id, None)
     _last_progress_value.pop(printer_id, None)
+    _print_almost_done_last_progress.pop(printer_id, None)
     if clear_job_key:
         _progress_job_key.pop(printer_id, None)
 
@@ -1242,6 +1247,18 @@ def _provider_name_for_progress(printer_id: int) -> str:
         return str(getattr(printer, "provider", None) or "bambu").strip().lower()
     except Exception:
         return ""
+
+
+def _should_send_print_almost_done(printer_id: int, progress: float) -> bool:
+    """Return whether this print just crossed the almost-done threshold."""
+
+    previous_progress = _print_almost_done_last_progress.get(printer_id)
+    _print_almost_done_last_progress[printer_id] = progress
+    return (
+        previous_progress is not None
+        and previous_progress < PRINT_ALMOST_DONE_PROGRESS_THRESHOLD <= progress
+        and not _print_almost_done_notified.get(printer_id, False)
+    )
 
 
 def _should_send_progress_milestone(
@@ -1424,11 +1441,11 @@ async def on_printer_status_change(printer_id: int, state: PrinterState):
 
         if progress < 5:
             # Reset milestone tracking at the beginning of a print even while the
-            # printer is already in RUNNING/PRINTING. The old elif branch never
-            # executed for early active prints because is_printing/progress>0 won.
+            # printer is already in RUNNING/PRINTING. Keep the almost-done sent
+            # flag until the job changes or becomes inactive so a transient
+            # same-job progress regression cannot send a duplicate.
             _last_progress_milestone[printer_id] = 0
             _pending_progress_milestone.pop(printer_id, None)
-            _print_almost_done_notified[printer_id] = False
             _first_layer_notified[printer_id] = False
 
         if progress > 0:
@@ -1495,7 +1512,7 @@ async def on_printer_status_change(printer_id: int, state: PrinterState):
 
             _last_progress_value[printer_id] = progress
 
-        if progress >= PRINT_ALMOST_DONE_PROGRESS_THRESHOLD and not _print_almost_done_notified.get(printer_id, False):
+        if _should_send_print_almost_done(printer_id, activity_progress):
             _print_almost_done_notified[printer_id] = True
             try:
                 async with async_session() as db:

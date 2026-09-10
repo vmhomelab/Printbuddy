@@ -274,3 +274,79 @@ async def test_milestone_notification_does_not_send_second_live_activity_update(
         db,
     )
     assert notification_service.on_print_progress.await_args.kwargs["update_live_activity"] is False
+
+
+@pytest.mark.asyncio
+async def test_almost_done_ignores_stale_high_startup_sample_then_sends_at_97_percent():
+    """A new print must cross 97% after a real low sample before almost-done fires."""
+
+    printer_id = 5656
+    main._last_status_broadcast.pop(printer_id, None)
+    main._last_progress_milestone.pop(printer_id, None)
+    main._last_progress_value.pop(printer_id, None)
+    main._progress_job_key.pop(printer_id, None)
+    main._pending_progress_milestone.pop(printer_id, None)
+    main._print_almost_done_notified.pop(printer_id, None)
+    main._print_almost_done_last_progress.pop(printer_id, None)
+    main._first_layer_notified.pop(printer_id, None)
+
+    db = AsyncMock()
+    printer = SimpleNamespace(name="Bambu Lab P1S")
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = printer
+    db.execute = AsyncMock(return_value=result)
+
+    with (
+        patch.object(main, "mqtt_relay") as mqtt_relay,
+        patch.object(main, "printer_manager") as printer_manager,
+        patch.object(main, "notification_service") as notification_service,
+        patch.object(main, "notify_live_activity_service") as live_activity_service,
+        patch.object(main, "smart_plug_manager") as smart_plug_manager,
+        patch.object(main, "_capture_snapshot_for_notification", new_callable=AsyncMock) as snapshot,
+        patch.object(main, "async_session", return_value=_AsyncSessionContext(db)),
+        patch.object(main.ws_manager, "send_printer_status", new_callable=AsyncMock),
+        patch.object(main, "printer_state_to_dict", return_value={"connected": True}),
+    ):
+        mqtt_relay.on_printer_status = AsyncMock()
+        printer_manager.get_printer.return_value = printer
+        printer_manager.get_model.return_value = "P1S"
+        notification_service.on_print_progress = AsyncMock()
+        notification_service.on_print_almost_done = AsyncMock()
+        live_activity_service.on_print_progress = AsyncMock()
+        smart_plug_manager.handle_print_state_change = AsyncMock()
+        snapshot.return_value = None
+
+        # The first frame belongs to the new job but still carries the previous
+        # print's final UI progress and layer counters. It must not trigger.
+        await main.on_printer_status_change(
+            printer_id,
+            _printing_state(progress=100, layer_num=100, total_layers=100),
+        )
+        notification_service.on_print_almost_done.assert_not_awaited()
+
+        # Once the real new-print state arrives, crossing 97% should notify once.
+        await main.on_printer_status_change(
+            printer_id,
+            _printing_state(progress=1, layer_num=1, total_layers=100),
+        )
+        await main.on_printer_status_change(
+            printer_id,
+            _printing_state(progress=97, layer_num=97, total_layers=100),
+        )
+        await main.on_printer_status_change(
+            printer_id,
+            _printing_state(progress=99, layer_num=99, total_layers=100),
+        )
+
+        # A transient same-job regression must not rearm an already-sent
+        # notification; only a new job or inactive transition may do that.
+        await main.on_printer_status_change(
+            printer_id,
+            _printing_state(progress=1, layer_num=1, total_layers=100),
+        )
+        await main.on_printer_status_change(
+            printer_id,
+            _printing_state(progress=97, layer_num=97, total_layers=100),
+        )
+
+    notification_service.on_print_almost_done.assert_awaited_once()
