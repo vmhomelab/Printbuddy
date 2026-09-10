@@ -3,7 +3,7 @@ import DOMPurify from 'dompurify';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
-import { AlertCircle, ArrowRight, Check, ChevronLeft, ChevronRight, Download, ExternalLink, FolderOpen, Globe, Images, Loader2, Trash2, X } from 'lucide-react';
+import { AlertCircle, ArrowRight, Check, ChevronLeft, ChevronRight, Download, ExternalLink, FolderOpen, Globe, Images, Link2, Loader2, Trash2, X } from 'lucide-react';
 
 import {
   api,
@@ -16,6 +16,7 @@ import { Button } from '../components/Button';
 import { Card, CardContent, CardHeader } from '../components/Card';
 import { ConfirmModal } from '../components/ConfirmModal';
 import { SliceModal, type SliceSource } from '../components/SliceModal';
+import { SourceSnapshotModal } from '../components/SourceSnapshotModal';
 import { Cog } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
@@ -157,6 +158,7 @@ export function MakerworldPage() {
   const [importsByProfile, setImportsByProfile] = useState<
     Record<number, MakerworldImportResponse>
   >({});
+  const [sourceDetailsImport, setSourceDetailsImport] = useState<MakerworldImportResponse | null>(null);
 
   const statusQuery = useQuery({
     queryKey: ['makerworld-status'],
@@ -833,6 +835,16 @@ export function MakerworldPage() {
                           <FolderOpen className="w-3.5 h-3.5" />
                           <span className="ml-1.5">{t('makerworld.viewInLibrary')}</span>
                         </Button>
+                        {imported.source_archive?.saved && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setSourceDetailsImport(imported)}
+                          >
+                            <Link2 className="w-3.5 h-3.5" />
+                            <span className="ml-1.5">{t('fileManager.sourceDetails')}</span>
+                          </Button>
+                        )}
                         {useSlicerApi ? (
                           <Button
                             variant="ghost"
@@ -1019,6 +1031,14 @@ export function MakerworldPage() {
         <SliceModal
           source={sliceModalSource}
           onClose={() => setSliceModalSource(null)}
+        />
+      )}
+
+      {sourceDetailsImport && (
+        <SourceSnapshotModal
+          fileId={sourceDetailsImport.library_file_id}
+          fallbackTitle={sourceDetailsImport.filename}
+          onClose={() => setSourceDetailsImport(null)}
         />
       )}
 

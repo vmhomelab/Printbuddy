@@ -194,6 +194,50 @@ describe('MakerworldPage', () => {
     });
   });
 
+  it('opens locally archived source details from a saved profile', async () => {
+    useAuthedHandlers();
+    server.use(
+      http.post('*/makerworld/resolve', () => HttpResponse.json(resolveResponse())),
+      http.post('*/makerworld/import', () =>
+        HttpResponse.json({
+          library_file_id: 99,
+          filename: 'seed-starter.3mf',
+          folder_id: 7,
+          profile_id: 298919107,
+          was_existing: false,
+          source_archive: { saved: true, image_count: 1, warning: null },
+        }),
+      ),
+      http.get('*/library/files/99/source-snapshot', () =>
+        HttpResponse.json({
+          title: 'Seed Starter',
+          creator: 'Meyui',
+          license: 'Standard',
+          description_html: '<p>Archived local instructions</p>',
+          captured_at: '2026-09-10T12:00:00Z',
+          source_url: 'https://makerworld.com/en/models/1400373',
+          images: [{ name: 'cover.png', role: 'cover' }],
+        }),
+      ),
+    );
+    render(<MakerworldPage />);
+    await userEvent.type(
+      await screen.findByPlaceholderText(/https:\/\/makerworld\.com/i),
+      'https://makerworld.com/en/models/1400373',
+    );
+    await userEvent.click(screen.getByRole('button', { name: /Resolve/i }));
+    await userEvent.click(screen.getByRole('checkbox', { name: /Archive MakerWorld details/i }));
+    await userEvent.click((await screen.findAllByRole('button', { name: /^Save$/i }))[0]);
+
+    const detailsButton = await screen.findByRole('button', { name: /Source details/i });
+    await userEvent.click(detailsButton);
+    expect(await screen.findByText('Archived local instructions')).toBeInTheDocument();
+    expect(screen.getAllByRole('img', { name: 'Seed Starter' }).at(-1)).toHaveAttribute(
+      'src',
+      expect.stringContaining('/library/files/99/source-assets/cover.png'),
+    );
+  });
+
   it('only requests source-detail archival after the user opts in', async () => {
     useAuthedHandlers();
     let importBody: Record<string, unknown> | null = null;
