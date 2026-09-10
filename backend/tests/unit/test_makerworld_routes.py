@@ -9,13 +9,17 @@ listing endpoint.
 
 from __future__ import annotations
 
+import json
+import zipfile
 from datetime import datetime, timedelta
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from backend.app.api.routes.makerworld import _canonical_url
 from backend.app.models.library import LibraryFile, LibraryFolder
+from backend.app.services.makerworld import MakerWorldUnavailableError
 
 
 def _fake_service(**stubs):
@@ -228,6 +232,293 @@ class TestImport:
     real DB writes, real ``save_3mf_bytes_to_library``, real folder auto-creation."""
 
     _FAKE_3MF_BYTES = b"PK\x03\x04not-a-real-3mf"
+
+    @pytest.mark.asyncio
+    async def test_source_archive_is_opt_in_and_disabled_by_default(self, async_client, db_session, tmp_path, monkeypatch):
+        from backend.app.core.config import settings as app_settings
+
+        monkeypatch.setattr(app_settings, "base_dir", tmp_path)
+        monkeypatch.setattr(app_settings, "archive_dir", tmp_path / "archive")
+        svc = _fake_service(
+            get_design={
+                **_default_design(),
+                "summary": "<p>Assembly instructions</p>",
+                "coverUrl": "https://makerworld.bblmw.com/cover.png",
+            },
+            get_profile_download=_default_manifest(),
+            download_3mf=(self._FAKE_3MF_BYTES, "benchy.3mf"),
+        )
+        svc.fetch_thumbnail = AsyncMock(return_value=(b"cover-bytes", "image/png"))
+
+        with patch("backend.app.api.routes.makerworld._build_service", AsyncMock(return_value=svc)):
+            resp = await async_client.post(
+                "/api/v1/makerworld/import",
+                json={"model_id": 1400373, "profile_id": 298919107},
+            )
+
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["source_archive"] is None
+        row = await db_session.get(LibraryFile, resp.json()["library_file_id"])
+        assert row.source_snapshot_path is None
+        svc.fetch_thumbnail.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_opt_in_source_archive_persists_description_and_cover(self, async_client, db_session, tmp_path, monkeypatch):
+        from backend.app.core.config import settings as app_settings
+
+        monkeypatch.setattr(app_settings, "base_dir", tmp_path)
+        monkeypatch.setattr(app_settings, "archive_dir", tmp_path / "archive")
+        design = {
+            **_default_design(),
+            "summary": "<p>Assembly instructions</p>",
+            "coverUrl": "https://makerworld.bblmw.com/cover.png",
+            "designCreator": {"name": "Maker"},
+            "license": "Standard",
+        }
+        svc = _fake_service(
+            get_design=design,
+            get_profile_download=_default_manifest(),
+            download_3mf=(self._FAKE_3MF_BYTES, "benchy.3mf"),
+            fetch_thumbnail=(b"cover-bytes", "image/png"),
+        )
+
+        with patch("backend.app.api.routes.makerworld._build_service", AsyncMock(return_value=svc)):
+            resp = await async_client.post(
+                "/api/v1/makerworld/import",
+                json={
+                    "model_id": 1400373,
+                    "profile_id": 298919107,
+                    "archive_details": True,
+                    "archive_image_count": 1,
+                },
+            )
+
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["source_archive"] == {"saved": True, "image_count": 1, "warning": None}
+        row = await db_session.get(LibraryFile, resp.json()["library_file_id"])
+        snapshot_path = Path(app_settings.base_dir) / row.source_snapshot_path
+        assert snapshot_path.is_file()
+        with zipfile.ZipFile(snapshot_path) as archive:
+            assert archive.read("cover.png") == b"cover-bytes"
+            manifest = json.loads(archive.read("snapshot.json"))
+        assert manifest["description_html"] == "<p>Assembly instructions</p>"
+        assert manifest["title"] == "Seed Starter"
+        assert manifest["creator"] == "Maker"
+        assert manifest["profile_id"] == 298919107
+        assert manifest["images"] == [{"name": "cover.png", "role": "cover"}]
+
+    @pytest.mark.asyncio
+    async def test_image_failure_keeps_import_and_archives_description(self, async_client, db_session, tmp_path, monkeypatch):
+        from backend.app.core.config import settings as app_settings
+
+        monkeypatch.setattr(app_settings, "base_dir", tmp_path)
+        monkeypatch.setattr(app_settings, "archive_dir", tmp_path / "archive")
+        svc = _fake_service(
+            get_design={
+                **_default_design(),
+                "summary": "<p>Instructions survive without an image</p>",
+                "coverUrl": "https://makerworld.bblmw.com/missing.png",
+            },
+            get_profile_download=_default_manifest(),
+            download_3mf=(self._FAKE_3MF_BYTES, "benchy.3mf"),
+        )
+        svc.fetch_thumbnail = AsyncMock(side_effect=MakerWorldUnavailableError("upstream image failed"))
+
+        with patch("backend.app.api.routes.makerworld._build_service", AsyncMock(return_value=svc)):
+            resp = await async_client.post(
+                "/api/v1/makerworld/import",
+                json={"model_id": 1400373, "profile_id": 298919107, "archive_details": True},
+            )
+
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["source_archive"]["saved"] is True
+        assert resp.json()["source_archive"]["image_count"] == 0
+        assert resp.json()["source_archive"]["warning"]
+        row = await db_session.get(LibraryFile, resp.json()["library_file_id"])
+        with zipfile.ZipFile(Path(app_settings.base_dir) / row.source_snapshot_path) as archive:
+            manifest = json.loads(archive.read("snapshot.json"))
+        assert manifest["description_html"] == "<p>Instructions survive without an image</p>"
+        assert manifest["images"] == []
+
+    @pytest.mark.asyncio
+    async def test_unexpected_service_error_still_closes_client(self, async_client):
+        svc = _fake_service()
+        svc.get_design = AsyncMock(side_effect=RuntimeError("unexpected upstream failure"))
+
+        with patch("backend.app.api.routes.makerworld._build_service", AsyncMock(return_value=svc)):
+            resp = await async_client.post(
+                "/api/v1/makerworld/import",
+                json={"model_id": 1400373, "profile_id": 298919107},
+            )
+
+        assert resp.status_code == 503
+        svc.close.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_snapshot_write_failure_keeps_successful_import(self, async_client, db_session, tmp_path, monkeypatch):
+        from backend.app.core.config import settings as app_settings
+
+        monkeypatch.setattr(app_settings, "base_dir", tmp_path)
+        monkeypatch.setattr(app_settings, "archive_dir", tmp_path / "archive")
+        svc = _fake_service(
+            get_design={
+                **_default_design(),
+                "summary": "<p>Still import the model</p>",
+                "coverUrl": "https://makerworld.bblmw.com/cover.png",
+            },
+            get_profile_download=_default_manifest(),
+            download_3mf=(self._FAKE_3MF_BYTES, "benchy.3mf"),
+        )
+
+        with (
+            patch("backend.app.api.routes.makerworld._build_service", AsyncMock(return_value=svc)),
+            patch(
+                "backend.app.api.routes.makerworld._write_source_snapshot",
+                AsyncMock(side_effect=OSError("simulated snapshot write failure")),
+            ),
+        ):
+            resp = await async_client.post(
+                "/api/v1/makerworld/import",
+                json={"model_id": 1400373, "profile_id": 298919107, "archive_details": True},
+            )
+
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["library_file_id"] > 0
+        assert body["filename"] == "benchy.3mf"
+        assert body["source_archive"] == {
+            "saved": False,
+            "image_count": 0,
+            "warning": "The file was imported, but its MakerWorld details could not be archived.",
+        }
+        row = await db_session.get(LibraryFile, body["library_file_id"])
+        assert row is not None
+        assert row.source_snapshot_path is None
+
+    @pytest.mark.asyncio
+    async def test_zero_image_count_archives_description_without_fetching_cover(self, async_client, db_session, tmp_path, monkeypatch):
+        from backend.app.core.config import settings as app_settings
+
+        monkeypatch.setattr(app_settings, "base_dir", tmp_path)
+        monkeypatch.setattr(app_settings, "archive_dir", tmp_path / "archive")
+        svc = _fake_service(
+            get_design={
+                **_default_design(),
+                "summary": "<p>Description only</p>",
+                "coverUrl": "https://makerworld.bblmw.com/cover.png",
+            },
+            get_profile_download=_default_manifest(),
+            download_3mf=(self._FAKE_3MF_BYTES, "benchy.3mf"),
+        )
+        svc.fetch_thumbnail = AsyncMock()
+
+        with patch("backend.app.api.routes.makerworld._build_service", AsyncMock(return_value=svc)):
+            resp = await async_client.post(
+                "/api/v1/makerworld/import",
+                json={
+                    "model_id": 1400373,
+                    "profile_id": 298919107,
+                    "archive_details": True,
+                    "archive_image_count": 0,
+                },
+            )
+
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["source_archive"] == {"saved": True, "image_count": 0, "warning": None}
+        svc.fetch_thumbnail.assert_not_called()
+        row = await db_session.get(LibraryFile, resp.json()["library_file_id"])
+        with zipfile.ZipFile(Path(app_settings.base_dir) / row.source_snapshot_path) as archive:
+            manifest = json.loads(archive.read("snapshot.json"))
+        assert manifest["description_html"] == "<p>Description only</p>"
+        assert manifest["images"] == []
+
+    @pytest.mark.asyncio
+    async def test_reimport_can_enrich_existing_file_without_redownloading(self, async_client, db_session, tmp_path, monkeypatch):
+        from backend.app.core.config import settings as app_settings
+
+        monkeypatch.setattr(app_settings, "base_dir", tmp_path)
+        monkeypatch.setattr(app_settings, "archive_dir", tmp_path / "archive")
+        existing = LibraryFile(
+            filename="already-here.3mf",
+            file_path="archive/library/files/already.3mf",
+            file_type="3mf",
+            file_size=500,
+            source_type="makerworld",
+            source_url="https://makerworld.com/models/1400373#profileId-298919107",
+        )
+        db_session.add(existing)
+        await db_session.commit()
+        await db_session.refresh(existing)
+        svc = _fake_service(
+            get_design={**_default_design(), "summary": "<p>Archived later</p>"},
+            get_profile_download=_default_manifest(),
+        )
+        svc.download_3mf = AsyncMock()
+
+        with patch("backend.app.api.routes.makerworld._build_service", AsyncMock(return_value=svc)):
+            resp = await async_client.post(
+                "/api/v1/makerworld/import",
+                json={
+                    "model_id": 1400373,
+                    "profile_id": 298919107,
+                    "archive_details": True,
+                    "archive_image_count": 0,
+                },
+            )
+
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["was_existing"] is True
+        assert resp.json()["source_archive"] == {"saved": True, "image_count": 0, "warning": None}
+        svc.download_3mf.assert_not_called()
+        await db_session.refresh(existing)
+        assert existing.source_snapshot_path
+        assert (Path(app_settings.base_dir) / existing.source_snapshot_path).is_file()
+
+    @pytest.mark.asyncio
+    async def test_reimport_snapshot_failure_keeps_existing_import_successful(self, async_client, db_session):
+        existing = LibraryFile(
+            filename="already-here.3mf",
+            file_path="library/files/already.3mf",
+            file_type="3mf",
+            file_size=500,
+            source_type="makerworld",
+            source_url="https://makerworld.com/models/1400373#profileId-298919107",
+        )
+        db_session.add(existing)
+        await db_session.commit()
+        await db_session.refresh(existing)
+        existing_id = existing.id
+        svc = _fake_service(
+            get_design={**_default_design(), "summary": "<p>Archived later</p>"},
+            get_profile_download=_default_manifest(),
+        )
+        svc.download_3mf = AsyncMock()
+
+        with (
+            patch("backend.app.api.routes.makerworld._build_service", AsyncMock(return_value=svc)),
+            patch(
+                "backend.app.api.routes.makerworld._write_source_snapshot",
+                AsyncMock(side_effect=OSError("simulated snapshot write failure")),
+            ),
+        ):
+            resp = await async_client.post(
+                "/api/v1/makerworld/import",
+                json={
+                    "model_id": 1400373,
+                    "profile_id": 298919107,
+                    "archive_details": True,
+                },
+            )
+
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["library_file_id"] == existing_id
+        assert body["filename"] == "already-here.3mf"
+        assert body["was_existing"] is True
+        assert body["source_archive"]["saved"] is False
+        assert body["source_archive"]["warning"]
+        svc.download_3mf.assert_not_called()
+        svc.close.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_returns_existing_on_source_url_match(self, async_client, db_session):

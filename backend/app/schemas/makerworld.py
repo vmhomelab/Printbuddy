@@ -56,6 +56,22 @@ class MakerWorldImportRequest(BaseModel):
         description="Retained for backwards compatibility; no longer used by the download flow.",
     )
     folder_id: int | None = Field(default=None, description="Target library folder; null = root")
+    archive_details: bool = Field(
+        default=False,
+        description="Opt in to storing a local snapshot of the MakerWorld description and display images.",
+    )
+    archive_image_count: int = Field(
+        default=1,
+        ge=0,
+        le=3,
+        description="Maximum display images to include when archive_details is enabled.",
+    )
+
+
+class MakerWorldSourceArchiveResult(BaseModel):
+    saved: bool
+    image_count: int = 0
+    warning: str | None = None
 
 
 class MakerWorldRecentImport(BaseModel):
@@ -101,6 +117,10 @@ class MakerWorldImportResponse(BaseModel):
     )
     was_existing: bool = Field(
         description="True if a prior import from the same source URL was reused (no re-download)"
+    )
+    source_archive: MakerWorldSourceArchiveResult | None = Field(
+        default=None,
+        description="Archival result when source-detail archival was explicitly requested.",
     )
 
 

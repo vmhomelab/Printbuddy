@@ -154,6 +154,40 @@ describe('MakerworldPage', () => {
     expect(saveButtons.length).toBe(2);
   });
 
+  it('only requests source-detail archival after the user opts in', async () => {
+    useAuthedHandlers();
+    let importBody: Record<string, unknown> | null = null;
+    server.use(
+      http.post('*/makerworld/resolve', () => HttpResponse.json(resolveResponse())),
+      http.post('*/makerworld/import', async ({ request }) => {
+        importBody = (await request.json()) as Record<string, unknown>;
+        return HttpResponse.json({
+          library_file_id: 99,
+          filename: 'benchy.3mf',
+          folder_id: 7,
+          profile_id: 298919107,
+          was_existing: false,
+          source_archive: { saved: true, image_count: 1, warning: null },
+        });
+      }),
+    );
+    render(<MakerworldPage />);
+    await userEvent.type(
+      await screen.findByPlaceholderText(/https:\/\/makerworld\.com/i),
+      'https://makerworld.com/en/models/1400373',
+    );
+    await userEvent.click(screen.getByRole('button', { name: /Resolve/i }));
+
+    const archiveToggle = await screen.findByRole('checkbox', { name: /Archive MakerWorld details/i });
+    expect(archiveToggle).not.toBeChecked();
+    await userEvent.click(archiveToggle);
+    await userEvent.click((await screen.findAllByRole('button', { name: /^Save$/ }))[0]);
+
+    await waitFor(() => {
+      expect(importBody).toMatchObject({ archive_details: true, archive_image_count: 1 });
+    });
+  });
+
   it('interpolates the slicer name into the slice button (Bambu Studio by default)', async () => {
     useAuthedHandlers({ slicer: 'bambu_studio' });
     server.use(

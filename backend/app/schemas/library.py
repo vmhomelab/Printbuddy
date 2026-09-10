@@ -137,6 +137,10 @@ class FileResponse(BaseModel):
 
     notes: str | None
 
+    source_type: str | None = None
+    source_url: str | None = None
+    source_snapshot_available: bool = False
+
     # Duplicate detection
     duplicates: list[FileDuplicate] | None = None
     duplicate_count: int = 0
@@ -168,6 +172,8 @@ class FileListResponse(BaseModel):
     file_type: str
     file_size: int
     thumbnail_path: str | None
+    source_type: str | None = None
+    source_snapshot_available: bool = False
     print_count: int
     duplicate_count: int = 0
     # User tracking (Issue #206)

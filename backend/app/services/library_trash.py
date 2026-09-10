@@ -358,7 +358,7 @@ class LibraryTrashService:
 
     @staticmethod
     def _unlink_on_disk(row: LibraryFile) -> None:
-        """Best-effort cleanup of the file + thumbnail on disk."""
+        """Best-effort cleanup of managed file, thumbnail, and source snapshot."""
         for rel in (row.file_path, row.thumbnail_path):
             abs_path = _to_absolute_path(rel)
             if abs_path is None:
@@ -368,6 +368,23 @@ class LibraryTrashService:
                     abs_path.unlink()
             except OSError as e:
                 logger.warning("Trash sweep: failed to unlink %s: %s", abs_path, e)
+
+        snapshot_path = _to_absolute_path(row.source_snapshot_path)
+        if snapshot_path is None:
+            return
+        snapshots_root = (Path(app_settings.archive_dir) / "library" / "source-snapshots").resolve()
+        resolved_snapshot = snapshot_path.resolve()
+        if not resolved_snapshot.is_relative_to(snapshots_root):
+            logger.warning(
+                "Trash sweep: refusing to unlink source snapshot outside managed directory: %s",
+                resolved_snapshot,
+            )
+            return
+        try:
+            if resolved_snapshot.exists():
+                resolved_snapshot.unlink()
+        except OSError as e:
+            logger.warning("Trash sweep: failed to unlink %s: %s", resolved_snapshot, e)
 
     # ---- User-facing trash ops ----------------------------------------
 

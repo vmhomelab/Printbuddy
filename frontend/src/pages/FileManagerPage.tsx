@@ -60,6 +60,7 @@ import { ModelViewerModal } from '../components/ModelViewerModal';
 import { SliceModal } from '../components/SliceModal';
 import { FileUploadModal } from '../components/FileUploadModal';
 import { PurgeOldFilesModal } from '../components/PurgeOldFilesModal';
+import { SourceSnapshotModal } from '../components/SourceSnapshotModal';
 import { useToast } from '../contexts/ToastContext';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { useAuth } from '../contexts/AuthContext';
@@ -709,6 +710,7 @@ interface FileCardProps {
   onPreview3d?: (file: LibraryFileListItem) => void;
   onRename?: (file: LibraryFileListItem) => void;
   onGenerateThumbnail?: (file: LibraryFileListItem) => void;
+  onSourceDetails?: (file: LibraryFileListItem) => void;
   thumbnailVersion?: number;
   hasPermission: (permission: Permission) => boolean;
   canModify: (resource: 'queue' | 'archives' | 'library', action: 'update' | 'delete' | 'reprint', createdById: number | null | undefined) => boolean;
@@ -716,7 +718,7 @@ interface FileCardProps {
   t: TFunction;
 }
 
-function FileCard({ file, isSelected, isMobile, onSelect, onDelete, onDownload, onAddToQueue, onPrint, onSlice, useSlicerApi, onPreview3d, onRename, onGenerateThumbnail, thumbnailVersion, hasPermission, canModify, authEnabled, t }: FileCardProps) {
+function FileCard({ file, isSelected, isMobile, onSelect, onDelete, onDownload, onAddToQueue, onPrint, onSlice, useSlicerApi, onPreview3d, onRename, onGenerateThumbnail, onSourceDetails, thumbnailVersion, hasPermission, canModify, authEnabled, t }: FileCardProps) {
   const [showActions, setShowActions] = useState(false);
 
   return (
@@ -788,6 +790,7 @@ function FileCard({ file, isSelected, isMobile, onSelect, onDelete, onDownload, 
         <button
           onClick={() => setShowActions(!showActions)}
           className="p-1.5 rounded bg-bambu-dark-secondary/90 hover:bg-bambu-dark-tertiary"
+          aria-label={t('common.actions')}
         >
           <MoreVertical className="w-4 h-4 text-bambu-gray" />
         </button>
@@ -845,6 +848,23 @@ function FileCard({ file, isSelected, isMobile, onSelect, onDelete, onDownload, 
                 >
                   <Box className="w-3.5 h-3.5" />
                   3D Preview
+                </button>
+              )}
+              {file.source_snapshot_available && onSourceDetails && (
+                <button
+                  className={`w-full px-3 py-1.5 text-left text-sm flex items-center gap-2 ${
+                    hasPermission('library:read') ? 'text-white hover:bg-bambu-dark' : 'text-bambu-gray cursor-not-allowed'
+                  }`}
+                  onClick={() => {
+                    if (hasPermission('library:read')) {
+                      onSourceDetails(file);
+                      setShowActions(false);
+                    }
+                  }}
+                  disabled={!hasPermission('library:read')}
+                >
+                  <Link2 className="w-3.5 h-3.5" />
+                  {t('fileManager.sourceDetails')}
                 </button>
               )}
               <button
@@ -941,6 +961,7 @@ export function FileManagerPage() {
   const [renameItem, setRenameItem] = useState<{ type: 'file' | 'folder'; id: number; name: string } | null>(null);
   const [thumbnailVersions, setThumbnailVersions] = useState<Record<number, number>>({});
   const [viewerFile, setViewerFile] = useState<LibraryFileListItem | null>(null);
+  const [sourceDetailsFile, setSourceDetailsFile] = useState<LibraryFileListItem | null>(null);
   const [viewMode, setViewMode] = useState<'grid' | 'list'>(() => {
     return (localStorage.getItem('library-view-mode') as 'grid' | 'list') || 'grid';
   });
@@ -1991,6 +2012,7 @@ export function FileManagerPage() {
                     }}
                     onRename={(f) => setRenameItem({ type: 'file', id: f.id, name: f.filename })}
                     onGenerateThumbnail={(f) => singleThumbnailMutation.mutate(f.id)}
+                    onSourceDetails={setSourceDetailsFile}
                     thumbnailVersion={thumbnailVersions[file.id]}
                     hasPermission={hasPermission}
                     canModify={canModify}
@@ -2164,6 +2186,21 @@ export function FileManagerPage() {
                           disabled={!hasPermission('library:read')}
                         >
                           <Box className="w-4 h-4" />
+                        </button>
+                      )}
+                      {file.source_snapshot_available && (
+                        <button
+                          onClick={() => hasPermission('library:read') && setSourceDetailsFile(file)}
+                          className={`p-1.5 rounded transition-colors ${
+                            hasPermission('library:read')
+                              ? 'hover:bg-bambu-dark text-bambu-gray hover:text-bambu-green'
+                              : 'text-bambu-gray/50 cursor-not-allowed'
+                          }`}
+                          title={t('fileManager.sourceDetails')}
+                          aria-label={t('fileManager.sourceDetails')}
+                          disabled={!hasPermission('library:read')}
+                        >
+                          <Link2 className="w-4 h-4" />
                         </button>
                       )}
                       <button
@@ -2373,6 +2410,14 @@ export function FileManagerPage() {
                 }
               : undefined
           }
+        />
+      )}
+
+      {sourceDetailsFile && (
+        <SourceSnapshotModal
+          fileId={sourceDetailsFile.id}
+          fallbackTitle={sourceDetailsFile.print_name || sourceDetailsFile.filename}
+          onClose={() => setSourceDetailsFile(null)}
         />
       )}
 

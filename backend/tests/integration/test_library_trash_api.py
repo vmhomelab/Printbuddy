@@ -1,9 +1,141 @@
-"""Integration tests for the library trash bin + admin purge (#1008)."""
+"""Integration tests for library trash, restore, purge preview, and settings APIs."""
 
+import inspect
+import json
+import zipfile
 from datetime import datetime, timedelta, timezone
 
 import pytest
 from httpx import AsyncClient
+
+from backend.app.models.library import LibraryFile
+from backend.app.services.library_trash import LibraryTrashService
+
+
+def test_source_asset_endpoint_accepts_browser_stream_token_auth():
+    from backend.app.api.routes.library import get_file_source_asset
+    from backend.app.core.auth import RequireCameraStreamTokenIfAuthEnabled
+
+    dependency = inspect.signature(get_file_source_asset).parameters["_"].default
+    assert dependency is RequireCameraStreamTokenIfAuthEnabled
+
+
+def test_hard_delete_cleanup_includes_source_snapshot(tmp_path, monkeypatch):
+    from backend.app.services import library_trash
+
+    monkeypatch.setattr(library_trash.app_settings, "base_dir", tmp_path)
+    monkeypatch.setattr(library_trash.app_settings, "archive_dir", tmp_path)
+    for relative in ("library/files/model.3mf", "library/thumbnails/model.png", "library/source-snapshots/model.zip"):
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"data")
+
+    row = LibraryFile(
+        filename="model.3mf",
+        file_path="library/files/model.3mf",
+        file_type="3mf",
+        file_size=4,
+        thumbnail_path="library/thumbnails/model.png",
+    )
+    row.source_snapshot_path = "library/source-snapshots/model.zip"
+
+    LibraryTrashService._unlink_on_disk(row)
+
+    assert not (tmp_path / "library/files/model.3mf").exists()
+    assert not (tmp_path / "library/thumbnails/model.png").exists()
+    assert not (tmp_path / "library/source-snapshots/model.zip").exists()
+
+
+def test_hard_delete_never_unlinks_snapshot_outside_managed_directory(tmp_path, monkeypatch):
+    from backend.app.services import library_trash
+
+    monkeypatch.setattr(library_trash.app_settings, "base_dir", tmp_path)
+    monkeypatch.setattr(library_trash.app_settings, "archive_dir", tmp_path / "archive")
+    outside = tmp_path / "must-survive.zip"
+    outside.write_bytes(b"data")
+    row = LibraryFile(
+        filename="model.3mf",
+        file_path="archive/library/files/missing.3mf",
+        file_type="3mf",
+        file_size=4,
+    )
+    row.source_snapshot_path = str(outside)
+
+    LibraryTrashService._unlink_on_disk(row)
+
+    assert outside.is_file()
+
+
+@pytest.mark.asyncio
+async def test_source_snapshot_metadata_and_assets_are_served_from_local_archive(
+    async_client: AsyncClient,
+    db_session,
+    tmp_path,
+    monkeypatch,
+):
+    from backend.app.api.routes import library
+
+    monkeypatch.setattr(library.app_settings, "base_dir", tmp_path)
+    monkeypatch.setattr(library.app_settings, "archive_dir", tmp_path)
+    snapshot_path = tmp_path / "library/source-snapshots/model.zip"
+    snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest = {
+        "schema_version": 1,
+        "source_type": "makerworld",
+        "model_id": 26,
+        "profile_id": 2601,
+        "title": "Archived model",
+        "description_html": "<p>Saved instructions</p>",
+        "creator": "Maker",
+        "license": "Standard",
+        "source_url": "https://makerworld.com/models/26#profileId-2601",
+        "captured_at": "2026-09-10T09:00:00+00:00",
+        "images": [{"name": "cover.png", "role": "cover"}],
+    }
+    with zipfile.ZipFile(snapshot_path, "w") as archive:
+        archive.writestr("snapshot.json", json.dumps(manifest))
+        archive.writestr("cover.png", b"png-bytes")
+        archive.writestr("not-in-manifest.png", b"private")
+
+    row = LibraryFile(
+        filename="model.3mf",
+        file_path="library/files/model.3mf",
+        file_type="3mf",
+        file_size=4,
+        source_type="makerworld",
+        source_url=manifest["source_url"],
+        source_snapshot_path="library/source-snapshots/model.zip",
+    )
+    db_session.add(row)
+    await db_session.commit()
+    await db_session.refresh(row)
+
+    listing = await async_client.get("/api/v1/library/files?include_root=true")
+    assert listing.status_code == 200, listing.text
+    listed_row = next(item for item in listing.json() if item["id"] == row.id)
+    assert listed_row["source_type"] == "makerworld"
+    assert listed_row["source_snapshot_available"] is True
+
+    metadata = await async_client.get(f"/api/v1/library/files/{row.id}/source-snapshot")
+    assert metadata.status_code == 200, metadata.text
+    body = metadata.json()
+    assert body["title"] == "Archived model"
+    assert body["description_html"] == "<p>Saved instructions</p>"
+    assert body["images"] == [
+        {
+            "name": "cover.png",
+            "role": "cover",
+            "url": f"/api/v1/library/files/{row.id}/source-assets/cover.png",
+        }
+    ]
+
+    asset = await async_client.get(f"/api/v1/library/files/{row.id}/source-assets/cover.png")
+    assert asset.status_code == 200
+    assert asset.headers["content-type"] == "image/png"
+    assert asset.content == b"png-bytes"
+
+    hidden = await async_client.get(f"/api/v1/library/files/{row.id}/source-assets/not-in-manifest.png")
+    assert hidden.status_code == 404
 
 
 @pytest.fixture

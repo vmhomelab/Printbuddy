@@ -122,6 +122,7 @@ export function MakerworldPage() {
   // of a user-selected folder; external read-only folders are filtered out
   // of the picker because the backend rejects those with 403.
   const [selectedFolderId, setSelectedFolderId] = useState<number | null>(null);
+  const [archiveDetails, setArchiveDetails] = useState(false);
   // Bulk-import progress. ``null`` when idle; ``{current, total}`` while
   // the "Import all" button is walking through ``instances[]``.
   const [bulkProgress, setBulkProgress] = useState<{ current: number; total: number } | null>(null);
@@ -218,7 +219,7 @@ export function MakerworldPage() {
 
   const importMutation = useMutation({
     mutationFn: ({ instanceId, profileId }: { instanceId: number; profileId: number | null }) =>
-      api.importMakerworldInstance(resolved?.model_id ?? 0, instanceId, profileId, selectedFolderId),
+      api.importMakerworldInstance(resolved?.model_id ?? 0, instanceId, profileId, selectedFolderId, archiveDetails, 1),
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['library-files'] });
       // Backend auto-creates a "MakerWorld" folder on first import; refresh
@@ -233,6 +234,14 @@ export function MakerworldPage() {
         data.was_existing ? t('makerworld.alreadyInLibrary') : t('makerworld.importSuccess', { filename: data.filename }),
         'success',
       );
+      if (data.source_archive?.warning) {
+        showToast(
+          data.source_archive.saved
+            ? t('makerworld.archivePartialWarning')
+            : t('makerworld.archiveFailedWarning'),
+          'warning',
+        );
+      }
     },
     onError: (err: Error) => showToast(err.message || t('makerworld.errors.downloadFailed'), 'error'),
   });
@@ -272,13 +281,21 @@ export function MakerworldPage() {
   // own "Download and Open" button behaviour.
   const sliceMutation = useMutation({
     mutationFn: ({ instanceId, profileId }: { instanceId: number; profileId: number | null }) =>
-      api.importMakerworldInstance(resolved?.model_id ?? 0, instanceId, profileId, selectedFolderId),
+      api.importMakerworldInstance(resolved?.model_id ?? 0, instanceId, profileId, selectedFolderId, archiveDetails, 1),
     onSuccess: async (data: MakerworldImportResponse) => {
       queryClient.invalidateQueries({ queryKey: ['library-files'] });
       queryClient.invalidateQueries({ queryKey: ['library-folders'] });
       queryClient.invalidateQueries({ queryKey: ['makerworld-recent-imports'] });
       if (data.profile_id) {
         setImportsByProfile((prev) => ({ ...prev, [data.profile_id!]: data }));
+      }
+      if (data.source_archive?.warning) {
+        showToast(
+          data.source_archive.saved
+            ? t('makerworld.archivePartialWarning')
+            : t('makerworld.archiveFailedWarning'),
+          'warning',
+        );
       }
       // After import, branch on the user's slicer-API preference: API mode
       // opens the in-app SliceModal; URI mode hands the file off to the
@@ -560,6 +577,18 @@ export function MakerworldPage() {
                       </option>
                     ))}
                 </select>
+                <label className="inline-flex cursor-pointer items-center gap-2 text-xs text-gray-600 dark:text-gray-300">
+                  <input
+                    type="checkbox"
+                    checked={archiveDetails}
+                    onChange={(event) => setArchiveDetails(event.target.checked)}
+                    disabled={bulkProgress !== null}
+                    className="h-4 w-4 rounded border-gray-400 text-bambu-green focus:ring-bambu-green"
+                  />
+                  <span title={t('makerworld.archiveDetailsDescription')}>
+                    {t('makerworld.archiveDetails')}
+                  </span>
+                </label>
                 <Button
                   variant="primary"
                   size="sm"

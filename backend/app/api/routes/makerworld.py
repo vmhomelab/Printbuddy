@@ -12,8 +12,14 @@ requests (see memory/makerworld-integration.md for the investigation).
 
 from __future__ import annotations
 
+import json
 import logging
 import os
+import tempfile
+import uuid
+import zipfile
+from datetime import datetime, timezone
+from pathlib import Path
 from urllib.parse import unquote
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -22,7 +28,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.api.routes.cloud import get_stored_token
-from backend.app.api.routes.library import save_3mf_bytes_to_library
+from backend.app.api.routes.library import (
+    get_library_dir,
+    save_3mf_bytes_to_library,
+    to_absolute_path,
+    to_relative_path,
+)
 from backend.app.core.auth import RequirePermissionIfAuthEnabled
 from backend.app.core.database import get_db
 from backend.app.core.permissions import Permission
@@ -34,6 +45,7 @@ from backend.app.schemas.makerworld import (
     MakerWorldRecentImport,
     MakerWorldResolvedModel,
     MakerWorldResolveRequest,
+    MakerWorldSourceArchiveResult,
     MakerWorldStatus,
 )
 from backend.app.services.makerworld import (
@@ -51,6 +63,178 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/makerworld", tags=["makerworld"])
 
 _SOURCE_TYPE = "makerworld"
+_MAX_DESCRIPTION_BYTES = 256 * 1024
+
+
+def _source_image_extension(content_type: str) -> str | None:
+    return {
+        "image/png": ".png",
+        "image/jpeg": ".jpg",
+        "image/gif": ".gif",
+        "image/webp": ".webp",
+        "image/bmp": ".bmp",
+    }.get(content_type.lower())
+
+
+def _creator_name(design: dict) -> str | None:
+    creator = design.get("designCreator")
+    if not isinstance(creator, dict):
+        return None
+    name = creator.get("name")
+    return name if isinstance(name, str) and name.strip() else None
+
+
+async def _write_source_snapshot(
+    service: MakerWorldService,
+    *,
+    design: dict,
+    model_id: int,
+    profile_id: int,
+    source_url: str,
+    image_count: int,
+) -> tuple[str, int, str | None]:
+    """Persist a portable MakerWorld source snapshot and return path/count/warning."""
+    description = design.get("summary") if isinstance(design.get("summary"), str) else ""
+    encoded_description = description.encode("utf-8")
+    warning: str | None = None
+    if len(encoded_description) > _MAX_DESCRIPTION_BYTES:
+        description = encoded_description[:_MAX_DESCRIPTION_BYTES].decode("utf-8", errors="ignore")
+        warning = "MakerWorld description was truncated to 256 KiB."
+
+    candidate_images: list[tuple[str, str]] = []
+    cover_url = design.get("coverUrl")
+    if isinstance(cover_url, str) and cover_url:
+        candidate_images.append(("cover", cover_url))
+
+    if image_count > len(candidate_images):
+        try:
+            envelope = await service.get_design_instances(model_id)
+            for instance in envelope.get("hits") or []:
+                if not isinstance(instance, dict) or instance.get("profileId") != profile_id:
+                    continue
+                pictures = instance.get("pictures") if isinstance(instance.get("pictures"), list) else []
+                for picture in pictures:
+                    if not isinstance(picture, dict):
+                        continue
+                    url = picture.get("url")
+                    if isinstance(url, str) and url:
+                        candidate_images.append(("gallery", url))
+                break
+        except MakerWorldError as exc:
+            logger.warning("MakerWorld display gallery could not be fetched for model %s: %s", model_id, exc)
+            warning = "The MakerWorld display gallery could not be archived."
+
+    seen_urls: set[str] = set()
+    selected_images: list[tuple[str, str]] = []
+    if image_count > 0:
+        for role, url in candidate_images:
+            if url in seen_urls:
+                continue
+            seen_urls.add(url)
+            selected_images.append((role, url))
+            if len(selected_images) >= image_count:
+                break
+
+    stored_images: list[tuple[str, bytes, str]] = []
+    for role, url in selected_images:
+        try:
+            payload, content_type = await service.fetch_thumbnail(url)
+        except MakerWorldError as exc:
+            logger.warning("MakerWorld image could not be archived for model %s: %s", model_id, exc)
+            warning = "One or more MakerWorld images could not be archived."
+            continue
+        ext = _source_image_extension(content_type)
+        if ext is None:
+            logger.warning(
+                "MakerWorld image for model %s used unsupported content type %s",
+                model_id,
+                content_type,
+            )
+            warning = "One or more MakerWorld images used an unsupported format and could not be archived."
+            continue
+        name = "cover" + ext if role == "cover" and not stored_images else f"gallery-{len(stored_images):02d}{ext}"
+        stored_images.append((name, payload, role))
+
+    title = design.get("title") if isinstance(design.get("title"), str) else None
+    license_name = design.get("license") if isinstance(design.get("license"), str) else None
+    manifest = {
+        "schema_version": 1,
+        "source_type": _SOURCE_TYPE,
+        "model_id": model_id,
+        "profile_id": profile_id,
+        "title": title,
+        "description_html": description,
+        "creator": _creator_name(design),
+        "license": license_name,
+        "source_url": source_url,
+        "captured_at": datetime.now(timezone.utc).isoformat(),
+        "images": [{"name": name, "role": role} for name, _payload, role in stored_images],
+    }
+
+    snapshots_dir = get_library_dir() / "source-snapshots"
+    snapshots_dir.mkdir(parents=True, exist_ok=True)
+    final_path = snapshots_dir / f"{uuid.uuid4().hex}.zip"
+    fd, temp_name = tempfile.mkstemp(prefix=".snapshot-", suffix=".tmp", dir=snapshots_dir)
+    os.close(fd)
+    temp_path = Path(temp_name)
+    try:
+        with zipfile.ZipFile(temp_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr("snapshot.json", json.dumps(manifest, ensure_ascii=False, indent=2))
+            for name, payload, _role in stored_images:
+                archive.writestr(name, payload)
+        temp_path.replace(final_path)
+    finally:
+        temp_path.unlink(missing_ok=True)
+    return to_relative_path(final_path), len(stored_images), warning
+
+
+def _discard_source_snapshot(relative_path: str | None) -> None:
+    """Remove an unattached snapshot, but only from the managed directory."""
+    if not relative_path:
+        return
+    try:
+        path = to_absolute_path(relative_path)
+        snapshots_root = (get_library_dir() / "source-snapshots").resolve()
+        if path is not None and path.resolve().is_relative_to(snapshots_root):
+            path.unlink(missing_ok=True)
+    except (OSError, ValueError) as exc:
+        logger.warning("Could not clean up unattached MakerWorld source snapshot: %s", exc)
+
+
+async def _attach_source_snapshot(
+    db: AsyncSession,
+    row: LibraryFile,
+    service: MakerWorldService,
+    *,
+    design: dict,
+    model_id: int,
+    profile_id: int,
+    source_url: str,
+    image_count: int,
+) -> MakerWorldSourceArchiveResult:
+    """Best-effort snapshot creation without changing import success semantics."""
+    row_id = row.id
+    snapshot_path: str | None = None
+    try:
+        snapshot_path, saved_images, warning = await _write_source_snapshot(
+            service,
+            design=design,
+            model_id=model_id,
+            profile_id=profile_id,
+            source_url=source_url,
+            image_count=image_count,
+        )
+        row.source_snapshot_path = snapshot_path
+        await db.commit()
+        return MakerWorldSourceArchiveResult(saved=True, image_count=saved_images, warning=warning)
+    except Exception as exc:  # noqa: BLE001 — source archival is deliberately best-effort
+        await db.rollback()
+        _discard_source_snapshot(snapshot_path)
+        logger.warning("MakerWorld source snapshot failed for library file %s: %s", row_id, exc)
+        return MakerWorldSourceArchiveResult(
+            saved=False,
+            warning="The file was imported, but its MakerWorld details could not be archived.",
+        )
 
 
 async def _build_service(db: AsyncSession, user: User | None) -> MakerWorldService:
@@ -280,124 +464,154 @@ async def import_instance(
 
     service = await _build_service(db, current_user)
 
-    # YASTL#51's iot-service endpoint needs the *alphanumeric* modelId
-    # (e.g. "US2bb73b106683e5"), not the integer design id from /models/{N}.
-    # Fetch design metadata to resolve it, and — in the same call — pick a
-    # default profileId from the response if the frontend didn't specify one.
     try:
-        design = await service.get_design(body.model_id)
-    except MakerWorldError as exc:
-        await service.close()
-        raise _map_service_error(exc) from exc
+        # YASTL#51's iot-service endpoint needs the *alphanumeric* modelId
+        # (e.g. "US2bb73b106683e5"), not the integer design id from /models/{N}.
+        # Fetch design metadata to resolve it, and — in the same call — pick a
+        # default profileId from the response if the frontend didn't specify one.
+        try:
+            design = await service.get_design(body.model_id)
+        except MakerWorldError as exc:
+            raise _map_service_error(exc) from exc
 
-    alphanumeric_model_id = design.get("modelId")
-    if not isinstance(alphanumeric_model_id, str) or not alphanumeric_model_id:
-        await service.close()
-        raise HTTPException(
-            status_code=502,
-            detail="MakerWorld design metadata missing the modelId field",
-        )
+        alphanumeric_model_id = design.get("modelId")
+        if not isinstance(alphanumeric_model_id, str) or not alphanumeric_model_id:
+            raise HTTPException(
+                status_code=502,
+                detail="MakerWorld design metadata missing the modelId field",
+            )
 
-    profile_id = body.profile_id
-    if profile_id is None:
-        for instance in design.get("instances") or []:
-            pid = instance.get("profileId")
-            if isinstance(pid, int) and pid > 0:
-                profile_id = pid
-                break
+        profile_id = body.profile_id
         if profile_id is None:
-            try:
-                envelope = await service.get_design_instances(body.model_id)
-            except MakerWorldError as exc:
-                await service.close()
-                raise _map_service_error(exc) from exc
-            for hit in envelope.get("hits") or []:
-                pid = hit.get("profileId")
+            for instance in design.get("instances") or []:
+                pid = instance.get("profileId")
                 if isinstance(pid, int) and pid > 0:
                     profile_id = pid
                     break
-        if profile_id is None:
-            await service.close()
-            raise HTTPException(
-                status_code=502,
-                detail="MakerWorld returned no instances for this model",
-            )
+            if profile_id is None:
+                try:
+                    envelope = await service.get_design_instances(body.model_id)
+                except MakerWorldError as exc:
+                    raise _map_service_error(exc) from exc
+                for hit in envelope.get("hits") or []:
+                    pid = hit.get("profileId")
+                    if isinstance(pid, int) and pid > 0:
+                        profile_id = pid
+                        break
+            if profile_id is None:
+                raise HTTPException(
+                    status_code=502,
+                    detail="MakerWorld returned no instances for this model",
+                )
 
-    # Canonical URL includes profile_id so each plate gets its own library
-    # entry (see ``_canonical_url`` docstring).
-    source_url = _canonical_url(body.model_id, profile_id)
+        # Canonical URL includes profile_id so each plate gets its own library
+        # entry (see ``_canonical_url`` docstring).
+        source_url = _canonical_url(body.model_id, profile_id)
 
-    try:
-        manifest = await service.get_profile_download(profile_id, alphanumeric_model_id)
-    except MakerWorldError as exc:
-        await service.close()
-        raise _map_service_error(exc) from exc
+        try:
+            manifest = await service.get_profile_download(profile_id, alphanumeric_model_id)
+        except MakerWorldError as exc:
+            raise _map_service_error(exc) from exc
 
-    signed_url = manifest.get("url")
-    # Basename-strip any path components from the upstream filename so a
-    # malicious response (``name: "../../evil.3mf"``) can't persist a suspect
-    # string into the library row or the UI. On-disk storage uses a UUID
-    # filename regardless (see library.py), so this is defence-in-depth.
-    raw_name = manifest.get("name")
-    if isinstance(raw_name, str) and raw_name.strip():
-        # MakerWorld emits percent-encoded names (`%20` for spaces, etc.)
-        # because the same string round-trips through HTTP URLs in the
-        # CDN download path. Decode before persisting so the library
-        # row, the slice toast, and every later UI surface show the
-        # human-readable form.
-        suggested_name = os.path.basename(unquote(raw_name.strip())) or f"makerworld-{body.model_id}.3mf"
-    else:
-        suggested_name = f"makerworld-{body.model_id}.3mf"
-    if not signed_url or not isinstance(signed_url, str):
-        await service.close()
-        raise HTTPException(status_code=502, detail="MakerWorld did not return a download URL")
+        signed_url = manifest.get("url")
+        # Basename-strip any path components from the upstream filename so a
+        # malicious response (``name: "../../evil.3mf"``) can't persist a suspect
+        # string into the library row or the UI. On-disk storage uses a UUID
+        # filename regardless (see library.py), so this is defence-in-depth.
+        raw_name = manifest.get("name")
+        if isinstance(raw_name, str) and raw_name.strip():
+            # MakerWorld emits percent-encoded names (`%20` for spaces, etc.)
+            # because the same string round-trips through HTTP URLs in the
+            # CDN download path. Decode before persisting so the library
+            # row, the slice toast, and every later UI surface show the
+            # human-readable form.
+            suggested_name = os.path.basename(unquote(raw_name.strip())) or f"makerworld-{body.model_id}.3mf"
+        else:
+            suggested_name = f"makerworld-{body.model_id}.3mf"
+        if not signed_url or not isinstance(signed_url, str):
+            raise HTTPException(status_code=502, detail="MakerWorld did not return a download URL")
 
-    # Dedupe check upfront so we don't burn bandwidth re-downloading.
-    if source_url:
-        existing_q = await db.execute(LibraryFile.active().where(LibraryFile.source_url == source_url).limit(1))
-        existing_row = existing_q.scalar_one_or_none()
-        if existing_row is not None:
-            await service.close()
-            return MakerWorldImportResponse(
-                library_file_id=existing_row.id,
-                filename=existing_row.filename,
-                folder_id=existing_row.folder_id,
+        # Dedupe check upfront so we don't burn bandwidth re-downloading. An
+        # explicitly requested source archive may still enrich an older row that
+        # predates this feature without re-downloading its 3MF.
+        if source_url:
+            existing_q = await db.execute(LibraryFile.active().where(LibraryFile.source_url == source_url).limit(1))
+            existing_row = existing_q.scalar_one_or_none()
+            if existing_row is not None:
+                # Materialise response fields before best-effort archival. A failed
+                # snapshot transaction rolls back (and expires ORM attributes), but
+                # must never turn an already-successful import into a 500 response.
+                response = MakerWorldImportResponse(
+                    library_file_id=existing_row.id,
+                    filename=existing_row.filename,
+                    folder_id=existing_row.folder_id,
+                    profile_id=profile_id,
+                    was_existing=True,
+                )
+                source_archive: MakerWorldSourceArchiveResult | None = None
+                if body.archive_details:
+                    if existing_row.source_snapshot_path:
+                        source_archive = MakerWorldSourceArchiveResult(saved=True)
+                    else:
+                        source_archive = await _attach_source_snapshot(
+                            db,
+                            existing_row,
+                            service,
+                            design=design,
+                            model_id=body.model_id,
+                            profile_id=profile_id,
+                            source_url=source_url,
+                            image_count=body.archive_image_count,
+                        )
+                return response.model_copy(update={"source_archive": source_archive})
+
+        try:
+            file_bytes, download_filename = await service.download_3mf(signed_url)
+        except MakerWorldError as exc:
+            raise _map_service_error(exc) from exc
+
+        # Prefer the server-provided human-readable filename; the signed URL's
+        # path ends in a UUID that's not meaningful to users. Decode the
+        # fallback path-tail too — same percent-encoding round-trip applies
+        # there as on the manifest-supplied name.
+        filename = suggested_name if suggested_name.endswith(".3mf") else unquote(download_filename)
+
+        library_file, was_existing = await save_3mf_bytes_to_library(
+            db,
+            file_bytes=file_bytes,
+            filename=filename,
+            folder_id=effective_folder_id,
+            source_type=_SOURCE_TYPE,
+            source_url=source_url,
+            owner_id=current_user.id if current_user else None,
+        )
+
+        # Capture the committed import response before the optional snapshot
+        # transaction. Rollback inside the best-effort archive path expires ORM
+        # state, so no response field may be read from ``library_file`` afterwards.
+        response = MakerWorldImportResponse(
+            library_file_id=library_file.id,
+            filename=library_file.filename,
+            folder_id=library_file.folder_id,
+            profile_id=profile_id,
+            was_existing=was_existing,
+        )
+        source_archive = None
+        if body.archive_details:
+            source_archive = await _attach_source_snapshot(
+                db,
+                library_file,
+                service,
+                design=design,
+                model_id=body.model_id,
                 profile_id=profile_id,
-                was_existing=True,
+                source_url=source_url,
+                image_count=body.archive_image_count,
             )
 
-    try:
-        file_bytes, download_filename = await service.download_3mf(signed_url)
-    except MakerWorldError as exc:
-        await service.close()
-        raise _map_service_error(exc) from exc
+        return response.model_copy(update={"source_archive": source_archive})
     finally:
         await service.close()
-
-    # Prefer the server-provided human-readable filename; the signed URL's
-    # path ends in a UUID that's not meaningful to users. Decode the
-    # fallback path-tail too — same percent-encoding round-trip applies
-    # there as on the manifest-supplied name.
-    filename = suggested_name if suggested_name.endswith(".3mf") else unquote(download_filename)
-
-    library_file, was_existing = await save_3mf_bytes_to_library(
-        db,
-        file_bytes=file_bytes,
-        filename=filename,
-        folder_id=effective_folder_id,
-        source_type=_SOURCE_TYPE,
-        source_url=source_url,
-        owner_id=current_user.id if current_user else None,
-    )
-
-    return MakerWorldImportResponse(
-        library_file_id=library_file.id,
-        filename=library_file.filename,
-        folder_id=library_file.folder_id,
-        profile_id=profile_id,
-        was_existing=was_existing,
-    )
-
 
 @router.get("/recent-imports", response_model=list[MakerWorldRecentImport])
 async def recent_imports(

@@ -2185,6 +2185,7 @@ async def run_migrations(conn):
     # as the library grows.
     await _safe_execute(conn, "ALTER TABLE library_files ADD COLUMN source_type VARCHAR(32)")
     await _safe_execute(conn, "ALTER TABLE library_files ADD COLUMN source_url VARCHAR(512)")
+    await _safe_execute(conn, "ALTER TABLE library_files ADD COLUMN source_snapshot_path VARCHAR(500)")
     await _safe_execute(
         conn,
         "CREATE INDEX IF NOT EXISTS ix_library_files_source_url ON library_files(source_url)",

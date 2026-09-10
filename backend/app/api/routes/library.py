@@ -1563,6 +1563,8 @@ async def list_files(
                 file_type=f.file_type,
                 file_size=f.file_size,
                 thumbnail_path=f.thumbnail_path,
+                source_type=f.source_type,
+                source_snapshot_available=bool(f.source_snapshot_path),
                 print_count=f.print_count,
                 duplicate_count=hash_counts.get(f.file_hash, 0) if f.file_hash else 0,
                 created_by_id=f.created_by_id,
@@ -3993,6 +3995,9 @@ async def get_file(
         print_count=file.print_count,
         last_printed_at=file.last_printed_at,
         notes=file.notes,
+        source_type=file.source_type,
+        source_url=file.source_url,
+        source_snapshot_available=bool(file.source_snapshot_path),
         duplicates=duplicates if duplicates else None,
         duplicate_count=duplicate_count,
         created_by_id=file.created_by_id,
@@ -4121,6 +4126,116 @@ async def delete_file(
 
 
 # ============ File Content Endpoints ============
+
+
+def _open_source_snapshot(file: LibraryFile) -> zipfile.ZipFile:
+    if not file.source_snapshot_path:
+        raise HTTPException(status_code=404, detail="No archived source details")
+    try:
+        snapshot_path = to_absolute_path(file.source_snapshot_path)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="Archived source details not found") from exc
+    snapshots_root = (get_library_dir() / "source-snapshots").resolve()
+    if snapshot_path is None:
+        raise HTTPException(status_code=404, detail="Archived source details not found")
+    resolved_path = snapshot_path.resolve()
+    if not resolved_path.is_relative_to(snapshots_root) or not resolved_path.is_file():
+        raise HTTPException(status_code=404, detail="Archived source details not found")
+    try:
+        return zipfile.ZipFile(resolved_path, "r")
+    except (OSError, zipfile.BadZipFile) as exc:
+        logger.warning("Could not open source snapshot for library file %s: %s", file.id, exc)
+        raise HTTPException(status_code=422, detail="Archived source details are unreadable") from exc
+
+
+def _read_source_manifest(file: LibraryFile, archive: zipfile.ZipFile) -> dict:
+    try:
+        info = archive.getinfo("snapshot.json")
+        if info.file_size > 512 * 1024:
+            raise HTTPException(status_code=422, detail="Archived source manifest is too large")
+        manifest = json.loads(archive.read(info))
+    except KeyError as exc:
+        raise HTTPException(status_code=422, detail="Archived source manifest is missing") from exc
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=422, detail="Archived source manifest is invalid") from exc
+    if not isinstance(manifest, dict):
+        raise HTTPException(status_code=422, detail="Archived source manifest is invalid")
+    return manifest
+
+
+@router.get("/files/{file_id}/source-snapshot")
+async def get_file_source_snapshot(
+    file_id: int,
+    db: AsyncSession = Depends(get_db),
+    _: User | None = Depends(require_permission_if_auth_enabled(Permission.LIBRARY_READ)),
+):
+    """Return locally archived source metadata with authenticated asset URLs."""
+    result = await db.execute(LibraryFile.active().where(LibraryFile.id == file_id))
+    file = result.scalar_one_or_none()
+    if file is None:
+        raise HTTPException(status_code=404, detail="File not found")
+    with _open_source_snapshot(file) as archive:
+        manifest = _read_source_manifest(file, archive)
+    images = manifest.get("images")
+    safe_images = []
+    if isinstance(images, list):
+        for image in images:
+            if not isinstance(image, dict):
+                continue
+            name = image.get("name")
+            role = image.get("role")
+            if not isinstance(name, str) or not isinstance(role, str) or Path(name).name != name:
+                continue
+            safe_images.append(
+                {
+                    "name": name,
+                    "role": role,
+                    "url": f"/api/v1/library/files/{file_id}/source-assets/{name}",
+                }
+            )
+    manifest["images"] = safe_images
+    return manifest
+
+
+@router.get("/files/{file_id}/source-assets/{asset_name}")
+async def get_file_source_asset(
+    file_id: int,
+    asset_name: str,
+    db: AsyncSession = Depends(get_db),
+    _: None = RequireCameraStreamTokenIfAuthEnabled,
+):
+    """Serve one allowlisted image from a library file's source snapshot."""
+    result = await db.execute(LibraryFile.active().where(LibraryFile.id == file_id))
+    file = result.scalar_one_or_none()
+    if file is None:
+        raise HTTPException(status_code=404, detail="File not found")
+    with _open_source_snapshot(file) as archive:
+        manifest = _read_source_manifest(file, archive)
+        allowed_names = {
+            image.get("name")
+            for image in manifest.get("images", [])
+            if isinstance(image, dict) and isinstance(image.get("name"), str)
+        }
+        if asset_name not in allowed_names or Path(asset_name).name != asset_name:
+            raise HTTPException(status_code=404, detail="Archived source image not found")
+        try:
+            info = archive.getinfo(asset_name)
+            if info.file_size > 10 * 1024 * 1024:
+                raise HTTPException(status_code=422, detail="Archived source image is too large")
+            payload = archive.read(info)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Archived source image not found") from exc
+    media_type = {
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".gif": "image/gif",
+        ".webp": "image/webp",
+        ".bmp": "image/bmp",
+    }.get(Path(asset_name).suffix.lower())
+    if media_type is None:
+        raise HTTPException(status_code=415, detail="Unsupported archived source image type")
+    return Response(content=payload, media_type=media_type, headers={"Cache-Control": "private, max-age=86400"})
 
 
 @router.get("/files/{file_id}/download")

@@ -1287,6 +1287,25 @@ export interface MakerworldImportResponse {
   folder_id: number | null;
   profile_id: number | null;
   was_existing: boolean;
+  source_archive: {
+    saved: boolean;
+    image_count: number;
+    warning: string | null;
+  } | null;
+}
+
+export interface LibrarySourceSnapshot {
+  schema_version: number;
+  source_type: string;
+  model_id: number;
+  profile_id: number | null;
+  title: string | null;
+  description_html: string;
+  creator: string | null;
+  license: string | null;
+  source_url: string;
+  captured_at: string;
+  images: Array<{ name: string; role: string; url: string }>;
 }
 
 export interface MakerworldRecentImport {
@@ -4762,6 +4781,8 @@ export const api = {
     instance_id: number | null,
     profile_id?: number | null,
     folder_id?: number | null,
+    archive_details = false,
+    archive_image_count = 1,
   ) =>
     request<MakerworldImportResponse>('/makerworld/import', {
       method: 'POST',
@@ -4770,6 +4791,8 @@ export const api = {
         instance_id: instance_id ?? null,
         profile_id: profile_id ?? null,
         folder_id: folder_id ?? null,
+        archive_details,
+        archive_image_count,
       }),
     }),
   getCloudSettingDetail: (settingId: string) =>
@@ -5902,6 +5925,10 @@ export const api = {
     return request<LibraryFileListItem[]>(`/library/files?${params}`);
   },
   getLibraryFile: (id: number) => request<LibraryFile>(`/library/files/${id}`),
+  getLibrarySourceSnapshot: (id: number) =>
+    request<LibrarySourceSnapshot>(`/library/files/${id}/source-snapshot`),
+  getLibrarySourceAssetUrl: (id: number, name: string) =>
+    withStreamToken(`${API_BASE}/library/files/${id}/source-assets/${encodeURIComponent(name)}`),
   uploadLibraryFile: async (
     file: File,
     folderId?: number | null,
@@ -6504,6 +6531,9 @@ export interface LibraryFile {
   print_count: number;
   last_printed_at: string | null;
   notes: string | null;
+  source_type: string | null;
+  source_url: string | null;
+  source_snapshot_available: boolean;
   duplicates: LibraryFileDuplicate[] | null;
   duplicate_count: number;
   // User tracking (Issue #206)
@@ -6526,6 +6556,8 @@ export interface LibraryFileListItem {
   file_type: string;
   file_size: number;
   thumbnail_path: string | null;
+  source_type?: string | null;
+  source_snapshot_available?: boolean;
   print_count: number;
   duplicate_count: number;
   // User tracking (Issue #206)
