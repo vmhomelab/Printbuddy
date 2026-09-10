@@ -5595,6 +5595,8 @@ export default {
     phaseDownloading: 'Lade herunter',
     folderAuto: 'MakerWorld (Standard)',
     importAll: 'Alle importieren',
+    importSelected: 'Ausgewählte importieren ({{count}})',
+    selectProfile: '{{profile}} auswählen',
     importAllProgress: 'Importiere {{current}}/{{total}}',
     openGallery: 'Bildergalerie öffnen',
     galleryPrev: 'Vorheriges Bild',

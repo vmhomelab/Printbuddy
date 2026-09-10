@@ -234,8 +234,12 @@ class TestImport:
     _FAKE_3MF_BYTES = b"PK\x03\x04not-a-real-3mf"
 
     @pytest.mark.asyncio
-    async def test_source_archive_is_opt_in_and_disabled_by_default(self, async_client, db_session, tmp_path, monkeypatch):
-        from backend.app.core.config import settings as app_settings
+    async def test_source_archive_is_opt_in_and_disabled_by_default(
+        self, async_client, db_session, tmp_path, monkeypatch
+    ):
+        from backend.app.api.routes import library as library_routes
+
+        app_settings = library_routes.app_settings
 
         monkeypatch.setattr(app_settings, "base_dir", tmp_path)
         monkeypatch.setattr(app_settings, "archive_dir", tmp_path / "archive")
@@ -263,8 +267,12 @@ class TestImport:
         svc.fetch_thumbnail.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_opt_in_source_archive_persists_description_and_cover(self, async_client, db_session, tmp_path, monkeypatch):
-        from backend.app.core.config import settings as app_settings
+    async def test_opt_in_source_archive_persists_description_and_cover(
+        self, async_client, db_session, tmp_path, monkeypatch
+    ):
+        from backend.app.api.routes import library as library_routes
+
+        app_settings = library_routes.app_settings
 
         monkeypatch.setattr(app_settings, "base_dir", tmp_path)
         monkeypatch.setattr(app_settings, "archive_dir", tmp_path / "archive")
@@ -308,8 +316,12 @@ class TestImport:
         assert manifest["images"] == [{"name": "cover.png", "role": "cover"}]
 
     @pytest.mark.asyncio
-    async def test_image_failure_keeps_import_and_archives_description(self, async_client, db_session, tmp_path, monkeypatch):
-        from backend.app.core.config import settings as app_settings
+    async def test_image_failure_keeps_import_and_archives_description(
+        self, async_client, db_session, tmp_path, monkeypatch
+    ):
+        from backend.app.api.routes import library as library_routes
+
+        app_settings = library_routes.app_settings
 
         monkeypatch.setattr(app_settings, "base_dir", tmp_path)
         monkeypatch.setattr(app_settings, "archive_dir", tmp_path / "archive")
@@ -355,8 +367,12 @@ class TestImport:
         svc.close.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_snapshot_write_failure_keeps_successful_import(self, async_client, db_session, tmp_path, monkeypatch):
-        from backend.app.core.config import settings as app_settings
+    async def test_snapshot_write_failure_keeps_successful_import(
+        self, async_client, db_session, tmp_path, monkeypatch
+    ):
+        from backend.app.api.routes import library as library_routes
+
+        app_settings = library_routes.app_settings
 
         monkeypatch.setattr(app_settings, "base_dir", tmp_path)
         monkeypatch.setattr(app_settings, "archive_dir", tmp_path / "archive")
@@ -396,8 +412,12 @@ class TestImport:
         assert row.source_snapshot_path is None
 
     @pytest.mark.asyncio
-    async def test_zero_image_count_archives_description_without_fetching_cover(self, async_client, db_session, tmp_path, monkeypatch):
-        from backend.app.core.config import settings as app_settings
+    async def test_zero_image_count_archives_description_without_fetching_cover(
+        self, async_client, db_session, tmp_path, monkeypatch
+    ):
+        from backend.app.api.routes import library as library_routes
+
+        app_settings = library_routes.app_settings
 
         monkeypatch.setattr(app_settings, "base_dir", tmp_path)
         monkeypatch.setattr(app_settings, "archive_dir", tmp_path / "archive")
@@ -433,8 +453,12 @@ class TestImport:
         assert manifest["images"] == []
 
     @pytest.mark.asyncio
-    async def test_reimport_can_enrich_existing_file_without_redownloading(self, async_client, db_session, tmp_path, monkeypatch):
-        from backend.app.core.config import settings as app_settings
+    async def test_reimport_can_enrich_existing_file_without_redownloading(
+        self, async_client, db_session, tmp_path, monkeypatch
+    ):
+        from backend.app.api.routes import library as library_routes
+
+        app_settings = library_routes.app_settings
 
         monkeypatch.setattr(app_settings, "base_dir", tmp_path)
         monkeypatch.setattr(app_settings, "archive_dir", tmp_path / "archive")

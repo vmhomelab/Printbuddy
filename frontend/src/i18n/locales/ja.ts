@@ -5595,6 +5595,8 @@ export default {
     phaseDownloading: 'ダウンロード中',
     folderAuto: 'MakerWorld (デフォルト)',
     importAll: 'すべてインポート',
+    importSelected: '選択したプロファイルをインポート ({{count}})',
+    selectProfile: '{{profile}} を選択',
     importAllProgress: 'インポート中 {{current}}/{{total}}',
     openGallery: '画像ギャラリーを開く',
     galleryPrev: '前の画像',

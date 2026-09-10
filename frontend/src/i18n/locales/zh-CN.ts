@@ -5581,6 +5581,8 @@ export default {
     phaseDownloading: '下载中',
     folderAuto: 'MakerWorld (默认)',
     importAll: '全部导入',
+    importSelected: '导入所选配置 ({{count}})',
+    selectProfile: '选择 {{profile}}',
     importAllProgress: '正在导入 {{current}}/{{total}}',
     openGallery: '打开图片库',
     galleryPrev: '上一张',

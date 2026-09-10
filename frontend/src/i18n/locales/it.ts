@@ -5583,6 +5583,8 @@ export default {
     phaseDownloading: 'Download',
     folderAuto: 'MakerWorld (predefinita)',
     importAll: 'Importa tutto',
+    importSelected: 'Importa selezionati ({{count}})',
+    selectProfile: 'Seleziona {{profile}}',
     importAllProgress: 'Importazione {{current}}/{{total}}',
     openGallery: 'Apri galleria immagini',
     galleryPrev: 'Immagine precedente',

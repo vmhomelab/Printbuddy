@@ -154,6 +154,46 @@ describe('MakerworldPage', () => {
     expect(saveButtons.length).toBe(2);
   });
 
+  it('imports and archives only the selected profiles', async () => {
+    useAuthedHandlers();
+    const importBodies: Array<Record<string, unknown>> = [];
+    server.use(
+      http.post('*/makerworld/resolve', () => HttpResponse.json(resolveResponse())),
+      http.post('*/makerworld/import', async ({ request }) => {
+        const body = (await request.json()) as Record<string, unknown>;
+        importBodies.push(body);
+        return HttpResponse.json({
+          library_file_id: 99,
+          filename: 'selected.3mf',
+          folder_id: 7,
+          profile_id: body.profile_id,
+          was_existing: false,
+          source_archive: { saved: true, image_count: 1, warning: null },
+        });
+      }),
+    );
+    render(<MakerworldPage />);
+    await userEvent.type(
+      await screen.findByPlaceholderText(/https:\/\/makerworld\.com/i),
+      'https://makerworld.com/en/models/1400373',
+    );
+    await userEvent.click(screen.getByRole('button', { name: /Resolve/i }));
+
+    const importSelected = await screen.findByRole('button', { name: /Import selected/i });
+    expect(importSelected).toBeDisabled();
+    await userEvent.click(screen.getByRole('checkbox', { name: /Select 12 cells/i }));
+    await userEvent.click(screen.getByRole('checkbox', { name: /Archive MakerWorld details/i }));
+    expect(importSelected).toHaveTextContent('1');
+    await userEvent.click(importSelected);
+
+    await waitFor(() => expect(importBodies).toHaveLength(1));
+    expect(importBodies[0]).toMatchObject({
+      profile_id: 298919564,
+      archive_details: true,
+      archive_image_count: 1,
+    });
+  });
+
   it('only requests source-detail archival after the user opts in', async () => {
     useAuthedHandlers();
     let importBody: Record<string, unknown> | null = null;

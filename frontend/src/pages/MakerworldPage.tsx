@@ -123,6 +123,7 @@ export function MakerworldPage() {
   // of the picker because the backend rejects those with 403.
   const [selectedFolderId, setSelectedFolderId] = useState<number | null>(null);
   const [archiveDetails, setArchiveDetails] = useState(false);
+  const [selectedProfileIds, setSelectedProfileIds] = useState<Set<number>>(() => new Set());
   // Bulk-import progress. ``null`` when idle; ``{current, total}`` while
   // the "Import all" button is walking through ``instances[]``.
   const [bulkProgress, setBulkProgress] = useState<{ current: number; total: number } | null>(null);
@@ -199,8 +200,9 @@ export function MakerworldPage() {
     onSuccess: (data, url) => {
       setResolved(data);
       setResolvedForUrl(url);
-      // Fresh resolve — clear any success card from a previous model.
+      // Fresh resolve — clear any success and selection from a previous model.
       setImportsByProfile({});
+      setSelectedProfileIds(new Set());
     },
     onError: (err: Error) => showToast(err.message || t('makerworld.errors.resolveFailed'), 'error'),
   });
@@ -214,6 +216,7 @@ export function MakerworldPage() {
       setResolved(null);
       setResolvedForUrl('');
       setImportsByProfile({});
+      setSelectedProfileIds(new Set());
     }
   }, [urlInput, resolved, resolvedForUrl]);
 
@@ -229,6 +232,11 @@ export function MakerworldPage() {
       // follow-up buttons even after multiple imports in the same session.
       if (data.profile_id) {
         setImportsByProfile((prev) => ({ ...prev, [data.profile_id!]: data }));
+        setSelectedProfileIds((prev) => {
+          const next = new Set(prev);
+          next.delete(data.profile_id!);
+          return next;
+        });
       }
       showToast(
         data.was_existing ? t('makerworld.alreadyInLibrary') : t('makerworld.importSuccess', { filename: data.filename }),
@@ -288,6 +296,11 @@ export function MakerworldPage() {
       queryClient.invalidateQueries({ queryKey: ['makerworld-recent-imports'] });
       if (data.profile_id) {
         setImportsByProfile((prev) => ({ ...prev, [data.profile_id!]: data }));
+        setSelectedProfileIds((prev) => {
+          const next = new Set(prev);
+          next.delete(data.profile_id!);
+          return next;
+        });
       }
       if (data.source_archive?.warning) {
         showToast(
@@ -354,16 +367,16 @@ export function MakerworldPage() {
     return cover ? [{ name: 'cover', url: cover }] : [];
   };
 
-  // "Import all plates" — walks through ``instances[]`` sequentially (not
-  // in parallel) so we don't hammer the Bambu API. Skips plates that have
-  // already been imported in this session. On per-plate failure, shows the
-  // error toast but continues with the next plate (partial success is
+  // "Import selected profiles" — walks through the explicit selection sequentially (not
+  // in parallel) so we don't hammer the Bambu API. Skips profiles that have
+  // already been imported in this session. On per-profile failure, shows the
+  // error toast but continues with the next selection (partial success is
   // better than a whole-batch abort).
-  const handleImportAll = async () => {
+  const handleImportSelected = async () => {
     if (!resolved) return;
     const plates = resolved.instances.filter((inst) => {
       const pid = pickNumber(inst, 'profileId');
-      return pid !== null && !importsByProfile[pid];
+      return pid !== null && selectedProfileIds.has(pid) && !importsByProfile[pid];
     });
     if (plates.length === 0) return;
 
@@ -411,6 +424,10 @@ export function MakerworldPage() {
   const design = resolved?.design;
   const creator = pickObject(design, 'designCreator');
   const instances = resolved?.instances ?? [];
+  const selectableProfileIds = instances
+    .map((inst) => pickNumber(inst, 'profileId'))
+    .filter((profileId): profileId is number => profileId !== null && !importsByProfile[profileId]);
+  const selectedProfileCount = selectableProfileIds.filter((profileId) => selectedProfileIds.has(profileId)).length;
   const alreadyImported = (resolved?.already_imported_library_ids.length ?? 0) > 0;
 
   const hasToken = statusQuery.data?.has_cloud_token ?? false;
@@ -590,6 +607,22 @@ export function MakerworldPage() {
                   </span>
                 </label>
                 <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={bulkProgress !== null || selectableProfileIds.length === 0}
+                  onClick={() => setSelectedProfileIds(new Set(selectableProfileIds))}
+                >
+                  {t('common.selectAll')}
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={bulkProgress !== null || selectedProfileCount === 0}
+                  onClick={() => setSelectedProfileIds(new Set())}
+                >
+                  {t('common.deselectAll')}
+                </Button>
+                <Button
                   variant="primary"
                   size="sm"
                   disabled={
@@ -597,9 +630,10 @@ export function MakerworldPage() {
                     !canDownload ||
                     bulkProgress !== null ||
                     importMutation.isPending ||
-                    sliceMutation.isPending
+                    sliceMutation.isPending ||
+                    selectedProfileCount === 0
                   }
-                  onClick={handleImportAll}
+                  onClick={handleImportSelected}
                 >
                   {bulkProgress !== null ? (
                     <>
@@ -612,7 +646,9 @@ export function MakerworldPage() {
                   ) : (
                     <>
                       <Download className="w-4 h-4" />
-                      <span className="ml-2">{t('makerworld.importAll')}</span>
+                      <span className="ml-2">
+                        {t('makerworld.importSelected', { count: selectedProfileCount })}
+                      </span>
                     </>
                   )}
                 </Button>
@@ -652,6 +688,24 @@ export function MakerworldPage() {
                     className="flex flex-col gap-2 p-3 border rounded border-gray-200 dark:border-gray-700"
                   >
                     <div className="flex gap-3 items-center">
+                      <input
+                        type="checkbox"
+                        checked={profileId !== null && selectedProfileIds.has(profileId)}
+                        onChange={(event) => {
+                          if (profileId === null) return;
+                          setSelectedProfileIds((prev) => {
+                            const next = new Set(prev);
+                            if (event.target.checked) next.add(profileId);
+                            else next.delete(profileId);
+                            return next;
+                          });
+                        }}
+                        disabled={profileId === null || imported !== undefined || bulkProgress !== null}
+                        aria-label={t('makerworld.selectProfile', {
+                          profile: instanceTitle || t('makerworld.plateDefaultName', { n: idx + 1 }),
+                        })}
+                        className="h-4 w-4 shrink-0 rounded border-gray-400 text-bambu-green focus:ring-bambu-green"
+                      />
                       {(() => {
                         const gallery = getInstanceImages(inst);
                         const canOpen = gallery.length > 0;
