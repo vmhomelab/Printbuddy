@@ -328,6 +328,28 @@ describe('AddNotificationModal — Notify Live Activity display', () => {
     });
   });
 
+  it('rejects a non-HTTPS Live Activity button URL', async () => {
+    const onClose = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <AddNotificationModal
+        provider={buildProvider({
+          provider_type: 'notify',
+          config: { device_id: 'DEVICE123', device_token: 'token', live_activities_enabled: 'true' },
+        })}
+        onClose={onClose}
+      />,
+    );
+
+    await user.click(await screen.findByRole('checkbox', { name: /enable live activity button/i }));
+    await user.type(screen.getByLabelText(/live activity button title/i), 'Open Printbuddy');
+    await user.type(screen.getByLabelText(/live activity button url/i), 'http://10.17.1.96:8000/');
+    await user.click(screen.getByRole('button', { name: /^save$/i }));
+
+    expect(await screen.findByText(/button URL must use HTTPS/i)).toBeInTheDocument();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
   it('renders and saves the Dynamic Island display mode for Notify providers', async () => {
     let captured: unknown = null;
     server.use(

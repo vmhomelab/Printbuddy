@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import re
 from typing import Any
+from urllib.parse import urlparse
 
 _PRINTBUDDY_SYMBOL = "printer"
 _ACTIVE_COLOR = "#0a84ff"
@@ -157,8 +158,11 @@ def build_end_content(
 def _add_button(content: dict[str, Any], *, title: str | None, url: str | None) -> None:
     title = str(title or "").strip()
     url = str(url or "").strip()
-    if title and url:
-        content["button"] = {"title": title, "url": url}
+    parsed_url = urlparse(url)
+    if title and len(title) <= 20 and len(url) <= 512 and parsed_url.scheme == "https" and parsed_url.netloc:
+        # Notify defaults to firing a background POST. Printbuddy buttons are
+        # navigation actions, so ask Notify to open the configured HTTPS URL.
+        content["button"] = {"title": title, "url": url, "open": True}
 
 
 def _normalize_progress_percent(progress: float | int | None) -> float:

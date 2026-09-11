@@ -163,7 +163,9 @@ async def test_print_start_uses_configured_live_activity_button(db_session, noti
     )
 
     assert client.start.await_args.args[0]["button"] == {
-        "title": "Pause", "url": "https://octoprint.example.com/api/pause"
+        "title": "Pause",
+        "url": "https://octoprint.example.com/api/pause",
+        "open": True,
     }
 
 
