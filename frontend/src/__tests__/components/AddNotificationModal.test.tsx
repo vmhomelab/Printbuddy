@@ -289,6 +289,45 @@ describe('AddNotificationModal — ntfy Priority (#990)', () => {
 });
 
 describe('AddNotificationModal — Notify Live Activity display', () => {
+  it('shows and saves button fields only when the Live Activity button checkbox is enabled', async () => {
+    let captured: unknown = null;
+    server.use(
+      http.patch('*/api/v1/notifications/1', async ({ request }) => {
+        captured = await request.json();
+        return HttpResponse.json({ id: 1 });
+      }),
+    );
+
+    const onClose = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <AddNotificationModal
+        provider={buildProvider({
+          name: 'Notify iPhone',
+          provider_type: 'notify',
+          config: { device_id: 'DEVICE123', device_token: 'token', live_activities_enabled: 'true' },
+        })}
+        onClose={onClose}
+      />,
+    );
+
+    const buttonCheckbox = await screen.findByRole('checkbox', { name: /enable live activity button/i });
+    expect(screen.queryByLabelText(/live activity button title/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/live activity button url/i)).not.toBeInTheDocument();
+
+    await user.click(buttonCheckbox);
+    await user.type(screen.getByLabelText(/live activity button title/i), 'Pause');
+    await user.type(screen.getByLabelText(/live activity button url/i), 'https://octoprint.example.com/api/pause');
+    await user.click(screen.getByRole('button', { name: /^save$/i }));
+
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect((captured as { config: Record<string, unknown> }).config).toMatchObject({
+      live_activity_button_enabled: 'true',
+      live_activity_button_title: 'Pause',
+      live_activity_button_url: 'https://octoprint.example.com/api/pause',
+    });
+  });
+
   it('renders and saves the Dynamic Island display mode for Notify providers', async () => {
     let captured: unknown = null;
     server.use(

@@ -171,6 +171,7 @@ class NotifyLiveActivityService:
                         total_layers=total_layers,
                         compact_display=self._compact_display(config),
                         native_countdown=self._native_tile_countdown(config),
+                        **self._button_options(config),
                     )
                 ),
                 subtask_id=subtask_id,
@@ -219,6 +220,7 @@ class NotifyLiveActivityService:
                             total_layers=total_layers,
                             compact_display=self._compact_display(config),
                             native_countdown=self._native_tile_countdown(config),
+                            **self._button_options(config),
                         )
                     ),
                     subtask_id=subtask_id,
@@ -281,6 +283,7 @@ class NotifyLiveActivityService:
             state=state,
             compact_display=self._compact_display(config),
             native_countdown=self._native_tile_countdown(config),
+            **self._button_options(config),
         )
         try:
             await client.update(activity.activity_id, payload)
@@ -316,6 +319,7 @@ class NotifyLiveActivityService:
                         total_layers=total_layers,
                         compact_display=self._compact_display(config),
                         native_countdown=self._native_tile_countdown(config),
+                        **self._button_options(config),
                     )
                 ),
                 subtask_id=subtask_id,
@@ -371,6 +375,7 @@ class NotifyLiveActivityService:
                     filename=filename or activity.filename or "Unknown print",
                     status=status,
                     reason=str(reason) if reason else None,
+                    **self._button_options(config),
                 )
                 await client.end(
                     activity.activity_id,
@@ -439,6 +444,7 @@ class NotifyLiveActivityService:
                         filename=activity.filename or "Unknown print",
                         status="stopped",
                         reason="Printer is no longer printing",
+                        **self._button_options(config),
                     )
                     await client.end(activity.activity_id, payload, keep_for_seconds=self._end_keep_for(config))
                     self._mark_ended(activity)
@@ -660,6 +666,7 @@ class NotifyLiveActivityService:
             filename=activity.filename or "Unknown print",
             status=status,
             reason="Replaced by a new print",
+            **self._button_options(provider_config),
         )
         await client.end(activity.activity_id, payload, keep_for_seconds=self._end_keep_for(provider_config))
         self._mark_ended(activity)
@@ -890,6 +897,15 @@ class NotifyLiveActivityService:
     @staticmethod
     def _native_tile_countdown(config: dict[str, Any]) -> bool:
         return NotifyLiveActivityService._truthy(config.get("live_activity_native_tile_countdown"))
+
+    @classmethod
+    def _button_options(cls, config: dict[str, Any]) -> dict[str, str | None]:
+        if not cls._truthy(config.get("live_activity_button_enabled")):
+            return {"button_title": None, "button_url": None}
+        return {
+            "button_title": str(config.get("live_activity_button_title") or "").strip() or None,
+            "button_url": str(config.get("live_activity_button_url") or "").strip() or None,
+        }
 
     @staticmethod
     def _truthy(value: Any) -> bool:

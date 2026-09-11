@@ -147,7 +147,10 @@ export function AddNotificationModal({ provider, onClose }: AddNotificationModal
     }
 
     // Validate provider-specific config
-    const requiredFields = getRequiredFields(providerType);
+    const requiredFields = getRequiredFields(providerType).filter(
+      (field) => !('showIf' in field)
+        || (field as { showIf?: (cfg: Record<string, string>) => boolean }).showIf?.(config) !== false,
+    );
     for (const field of requiredFields) {
       if (!config[field.key]?.trim()) {
         setError(t('notifications.fieldRequired', { field: field.label }));
@@ -278,6 +281,9 @@ export function AddNotificationModal({ provider, onClose }: AddNotificationModal
             { value: 'false', label: 'Disabled' },
             { value: 'true', label: 'Enabled' },
           ]},
+          { key: 'live_activity_button_enabled', label: 'Enable Live Activity Button', type: 'checkbox', required: false },
+          { key: 'live_activity_button_title', label: 'Live Activity Button Title', placeholder: 'Pause', type: 'text', required: true, showIf: (cfg: Record<string, string>) => cfg.live_activity_button_enabled === 'true' },
+          { key: 'live_activity_button_url', label: 'Live Activity Button URL', placeholder: 'https://octoprint.example.com/api/pause', type: 'url', required: true, showIf: (cfg: Record<string, string>) => cfg.live_activity_button_enabled === 'true' },
           { key: 'live_activity_keepalive_seconds', label: 'Live Activity Keepalive Seconds', placeholder: '60', type: 'number', required: false },
           { key: 'live_activity_end_keep_for_seconds', label: 'Keep Final Tile Seconds', placeholder: '300', type: 'number', required: false },
         ];
@@ -370,7 +376,18 @@ export function AddNotificationModal({ provider, onClose }: AddNotificationModal
                 <label htmlFor={fieldId} className="block text-sm text-bambu-gray mb-1">
                   {field.label} {field.required && '*'}
                 </label>
-                {field.type === 'select' && 'options' in field && field.options ? (
+                {field.type === 'checkbox' ? (
+                  <input
+                    id={fieldId}
+                    type="checkbox"
+                    checked={config[field.key] === 'true'}
+                    onChange={(e) => {
+                      setConfig({ ...config, [field.key]: String(e.target.checked) });
+                      setTestResult(null);
+                    }}
+                    className="h-4 w-4 rounded border-bambu-dark-tertiary bg-bambu-dark text-bambu-green focus:ring-bambu-green"
+                  />
+                ) : field.type === 'select' && 'options' in field && field.options ? (
                   <select
                     id={fieldId}
                     value={config[field.key] || field.options[0]?.value || ''}

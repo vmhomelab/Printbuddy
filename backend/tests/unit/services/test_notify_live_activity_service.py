@@ -144,6 +144,30 @@ async def test_print_start_uses_configured_native_tile_countdown(db_session, not
 
 
 @pytest.mark.asyncio
+async def test_print_start_uses_configured_live_activity_button(db_session, notify_provider):
+    notify_provider.config = json.dumps({
+        "device_id": "DEVICE123",
+        "device_token": "token",
+        "live_activities_enabled": True,
+        "live_activity_button_enabled": "true",
+        "live_activity_button_title": "Pause",
+        "live_activity_button_url": "https://octoprint.example.com/api/pause",
+    })
+    await db_session.commit()
+    client = AsyncMock()
+    client.start = AsyncMock(return_value="activity-123")
+    service = NotifyLiveActivityService(client_factory=lambda config: client)
+
+    await service.on_print_start(
+        db_session, printer_id=7, printer_name="Workshop P1S", data={"filename": "dragon.3mf", "subtask_id": "task-1"}
+    )
+
+    assert client.start.await_args.args[0]["button"] == {
+        "title": "Pause", "url": "https://octoprint.example.com/api/pause"
+    }
+
+
+@pytest.mark.asyncio
 async def test_duplicate_print_start_ends_existing_activity_first(db_session, notify_provider):
     existing = NotificationLiveActivity(
         provider_id=notify_provider.id,
