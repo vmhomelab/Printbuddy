@@ -25,6 +25,7 @@ const mockPrinter = {
   nozzle_type: 'hardened_steel',
   location: null,
   auto_archive: true,
+  reconnect_interval_seconds: 30,
   created_at: '2024-01-01T00:00:00Z',
   updated_at: '2024-01-01T00:00:00Z',
 };
@@ -143,6 +144,10 @@ describe('EditPrinterModal pre-flight', () => {
     expect(await screen.findByText('PrusaLink password / API key')).toBeInTheDocument();
     expect(screen.queryByText(/^Access Code$/)).not.toBeInTheDocument();
     expect(screen.getByText('PrusaLink API / authentication mode')).toBeInTheDocument();
+    const reconnectInterval = screen.getByLabelText('Offline reconnect interval (seconds)') as HTMLInputElement;
+    expect(reconnectInterval.value).toBe('30');
+    await userEvent.clear(reconnectInterval);
+    await userEvent.type(reconnectInterval, '90');
 
     await userEvent.type(screen.getByLabelText('PrusaLink password / API key'), 'new-secret');
     await userEvent.selectOptions(
@@ -153,6 +158,7 @@ describe('EditPrinterModal pre-flight', () => {
 
     await waitFor(() => expect(updatePayload).not.toBeNull());
     expect(updatePayload?.auth_token).toBe('new-secret');
+    expect((updatePayload as unknown as Record<string, unknown>).reconnect_interval_seconds).toBe(90);
     expect(updatePayload?.access_code).toBeUndefined();
     expect(JSON.parse(updatePayload?.provider_options as string)).toEqual({
       prusalink_api_mode: 'legacy',

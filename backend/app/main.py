@@ -5856,6 +5856,12 @@ async def lifespan(app: FastAPI):
     async with async_session() as db:
         await init_printer_connections(db)
 
+    # Retry active offline printers independently from browser/UI status polling.
+    from backend.app.services.printer_reconnect import PrinterReconnectService
+
+    printer_reconnect_service = PrinterReconnectService(printer_manager, async_session)
+    printer_reconnect_service.start()
+
     # Auto-connect to Spoolman if enabled
     async with async_session() as db:
         from backend.app.api.routes.settings import get_setting
@@ -5955,6 +5961,7 @@ async def lifespan(app: FastAPI):
     yield
 
     # Shutdown
+    await printer_reconnect_service.stop()
     print_scheduler.stop()
     await background_dispatch.stop()
     smart_plug_manager.stop_scheduler()

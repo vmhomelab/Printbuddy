@@ -289,6 +289,17 @@ class TestPrintersAPI:
 
     @pytest.mark.asyncio
     @pytest.mark.integration
+    async def test_update_printer_reconnect_interval(self, async_client: AsyncClient, printer_factory, db_session):
+        """An active printer persists its backend reconnect interval."""
+        printer = await printer_factory(reconnect_interval_seconds=30)
+
+        response = await async_client.patch(f"/api/v1/printers/{printer.id}", json={"reconnect_interval_seconds": 90})
+
+        assert response.status_code == 200
+        assert response.json()["reconnect_interval_seconds"] == 90
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
     async def test_update_nonexistent_printer(self, async_client: AsyncClient):
         """Verify updating non-existent printer returns 404."""
         response = await async_client.patch("/api/v1/printers/9999", json={"name": "New Name"})
