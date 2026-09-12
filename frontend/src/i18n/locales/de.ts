@@ -5580,6 +5580,8 @@ export default {
     importToLibrary: 'Speichern',
     archiveDetails: 'MakerWorld-Details archivieren',
     archiveDetailsDescription: 'Modellbeschreibung und Titelbild lokal mit der importierten Datei speichern.',
+    useCoverAsThumbnail: 'MakerWorld-Titelbild als Bibliotheksvorschau verwenden',
+    useCoverAsThumbnailDescription: 'Das lokal archivierte MakerWorld-Titelbild als Bibliotheksvorschau dieser Datei verwenden.',
     archivePartialWarning: 'Das Modell wurde gespeichert, aber einige MakerWorld-Bilder konnten nicht archiviert werden.',
     archiveFailedWarning: 'Das Modell wurde gespeichert, aber seine MakerWorld-Details konnten nicht archiviert werden.',
     sliceIn: 'Speichern & in {{slicer}} öffnen',

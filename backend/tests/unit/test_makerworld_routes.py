@@ -316,6 +316,43 @@ class TestImport:
         assert manifest["images"] == [{"name": "cover.png", "role": "cover"}]
 
     @pytest.mark.asyncio
+    async def test_opt_in_cover_thumbnail_uses_locally_archived_cover(
+        self, async_client, db_session, tmp_path, monkeypatch
+    ):
+        from backend.app.api.routes import library as library_routes
+
+        app_settings = library_routes.app_settings
+        monkeypatch.setattr(app_settings, "base_dir", tmp_path)
+        monkeypatch.setattr(app_settings, "archive_dir", tmp_path / "archive")
+        svc = _fake_service(
+            get_design={
+                **_default_design(),
+                "coverUrl": "https://makerworld.bblmw.com/cover.png",
+            },
+            get_profile_download=_default_manifest(),
+            download_3mf=(self._FAKE_3MF_BYTES, "benchy.3mf"),
+            fetch_thumbnail=(b"local-cover-bytes", "image/png"),
+        )
+
+        with patch("backend.app.api.routes.makerworld._build_service", AsyncMock(return_value=svc)):
+            resp = await async_client.post(
+                "/api/v1/makerworld/import",
+                json={
+                    "model_id": 1400373,
+                    "profile_id": 298919107,
+                    "archive_details": True,
+                    "use_cover_as_thumbnail": True,
+                },
+            )
+
+        assert resp.status_code == 200, resp.text
+        row = await db_session.get(LibraryFile, resp.json()["library_file_id"])
+        assert row.thumbnail_path is not None
+        thumbnail_path = Path(app_settings.base_dir) / row.thumbnail_path
+        assert thumbnail_path.parent.name == "thumbnails"
+        assert thumbnail_path.read_bytes() == b"local-cover-bytes"
+
+    @pytest.mark.asyncio
     async def test_image_failure_keeps_import_and_archives_description(
         self, async_client, db_session, tmp_path, monkeypatch
     ):

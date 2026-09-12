@@ -66,6 +66,10 @@ class MakerWorldImportRequest(BaseModel):
         le=3,
         description="Maximum display images to include when archive_details is enabled.",
     )
+    use_cover_as_thumbnail: bool = Field(
+        default=False,
+        description="Use the locally archived MakerWorld cover image as this library file's thumbnail.",
+    )
 
 
 class MakerWorldSourceArchiveResult(BaseModel):

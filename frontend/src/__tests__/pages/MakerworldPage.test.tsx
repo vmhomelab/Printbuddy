@@ -182,7 +182,11 @@ describe('MakerworldPage', () => {
     const importSelected = await screen.findByRole('button', { name: /Import selected/i });
     expect(importSelected).toBeDisabled();
     await userEvent.click(screen.getByRole('checkbox', { name: /Select 12 cells/i }));
+    const useCoverThumbnail = screen.getByRole('checkbox', { name: /Use MakerWorld cover as library thumbnail/i });
+    expect(useCoverThumbnail).toBeDisabled();
     await userEvent.click(screen.getByRole('checkbox', { name: /Archive MakerWorld details/i }));
+    expect(useCoverThumbnail).toBeEnabled();
+    await userEvent.click(useCoverThumbnail);
     expect(importSelected).toHaveTextContent('1');
     await userEvent.click(importSelected);
 
@@ -191,6 +195,7 @@ describe('MakerworldPage', () => {
       profile_id: 298919564,
       archive_details: true,
       archive_image_count: 1,
+      use_cover_as_thumbnail: true,
     });
   });
 

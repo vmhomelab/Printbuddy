@@ -5592,6 +5592,8 @@ export default {
     importToLibrary: 'Save',
     archiveDetails: 'Archive MakerWorld details',
     archiveDetailsDescription: 'Save the model description and cover image locally with the imported file.',
+    useCoverAsThumbnail: 'Use MakerWorld cover as library thumbnail',
+    useCoverAsThumbnailDescription: "Use the locally archived MakerWorld cover image for this file's library thumbnail.",
     archivePartialWarning: 'The model was saved, but some MakerWorld images could not be archived.',
     archiveFailedWarning: 'The model was saved, but its MakerWorld details could not be archived.',
     sliceIn: 'Save & Slice in {{slicer}}',

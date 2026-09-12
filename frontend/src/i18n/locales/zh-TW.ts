@@ -5566,6 +5566,8 @@ export default {
     importToLibrary: '儲存',
     archiveDetails: '封存 MakerWorld 詳情',
     archiveDetailsDescription: '將模型說明與封面圖片連同匯入檔案儲存在本機。',
+    useCoverAsThumbnail: '使用 MakerWorld 封面作為媒體庫縮圖',
+    useCoverAsThumbnailDescription: '將本機封存的 MakerWorld 封面圖片用作此檔案的媒體庫縮圖。',
     archivePartialWarning: '模型已儲存，但部分 MakerWorld 圖片無法封存。',
     archiveFailedWarning: '模型已儲存，但其 MakerWorld 詳情無法封存。',
     sliceIn: '儲存並在 {{slicer}} 中切片',

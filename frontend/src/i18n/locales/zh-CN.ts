@@ -5566,6 +5566,8 @@ export default {
     importToLibrary: '保存',
     archiveDetails: '归档 MakerWorld 详情',
     archiveDetailsDescription: '将模型描述和封面图与导入文件一起保存到本地。',
+    useCoverAsThumbnail: '使用 MakerWorld 封面作为库缩略图',
+    useCoverAsThumbnailDescription: '将本地归档的 MakerWorld 封面图用作此文件的库缩略图。',
     archivePartialWarning: '模型已保存，但部分 MakerWorld 图片无法归档。',
     archiveFailedWarning: '模型已保存，但其 MakerWorld 详情无法归档。',
     sliceIn: '保存并在 {{slicer}} 中切片',

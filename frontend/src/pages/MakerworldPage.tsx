@@ -124,6 +124,7 @@ export function MakerworldPage() {
   // of the picker because the backend rejects those with 403.
   const [selectedFolderId, setSelectedFolderId] = useState<number | null>(null);
   const [archiveDetails, setArchiveDetails] = useState(false);
+  const [useCoverAsThumbnail, setUseCoverAsThumbnail] = useState(false);
   const [selectedProfileIds, setSelectedProfileIds] = useState<Set<number>>(() => new Set());
   // Bulk-import progress. ``null`` when idle; ``{current, total}`` while
   // the "Import all" button is walking through ``instances[]``.
@@ -224,7 +225,7 @@ export function MakerworldPage() {
 
   const importMutation = useMutation({
     mutationFn: ({ instanceId, profileId }: { instanceId: number; profileId: number | null }) =>
-      api.importMakerworldInstance(resolved?.model_id ?? 0, instanceId, profileId, selectedFolderId, archiveDetails, 1),
+      api.importMakerworldInstance(resolved?.model_id ?? 0, instanceId, profileId, selectedFolderId, archiveDetails, 1, useCoverAsThumbnail),
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['library-files'] });
       // Backend auto-creates a "MakerWorld" folder on first import; refresh
@@ -291,7 +292,7 @@ export function MakerworldPage() {
   // own "Download and Open" button behaviour.
   const sliceMutation = useMutation({
     mutationFn: ({ instanceId, profileId }: { instanceId: number; profileId: number | null }) =>
-      api.importMakerworldInstance(resolved?.model_id ?? 0, instanceId, profileId, selectedFolderId, archiveDetails, 1),
+      api.importMakerworldInstance(resolved?.model_id ?? 0, instanceId, profileId, selectedFolderId, archiveDetails, 1, useCoverAsThumbnail),
     onSuccess: async (data: MakerworldImportResponse) => {
       queryClient.invalidateQueries({ queryKey: ['library-files'] });
       queryClient.invalidateQueries({ queryKey: ['library-folders'] });
@@ -600,12 +601,28 @@ export function MakerworldPage() {
                   <input
                     type="checkbox"
                     checked={archiveDetails}
-                    onChange={(event) => setArchiveDetails(event.target.checked)}
+                    onChange={(event) => {
+                      const enabled = event.target.checked;
+                      setArchiveDetails(enabled);
+                      if (!enabled) setUseCoverAsThumbnail(false);
+                    }}
                     disabled={bulkProgress !== null}
                     className="h-4 w-4 rounded border-gray-400 text-bambu-green focus:ring-bambu-green"
                   />
                   <span title={t('makerworld.archiveDetailsDescription')}>
                     {t('makerworld.archiveDetails')}
+                  </span>
+                </label>
+                <label className="inline-flex cursor-pointer items-center gap-2 text-xs text-gray-600 dark:text-gray-300">
+                  <input
+                    type="checkbox"
+                    checked={useCoverAsThumbnail}
+                    onChange={(event) => setUseCoverAsThumbnail(event.target.checked)}
+                    disabled={!archiveDetails || bulkProgress !== null}
+                    className="h-4 w-4 rounded border-gray-400 text-bambu-green focus:ring-bambu-green"
+                  />
+                  <span title={t('makerworld.useCoverAsThumbnailDescription')}>
+                    {t('makerworld.useCoverAsThumbnail')}
                   </span>
                 </label>
                 <Button

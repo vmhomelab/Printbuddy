@@ -4785,6 +4785,7 @@ export const api = {
     folder_id?: number | null,
     archive_details = false,
     archive_image_count = 1,
+    use_cover_as_thumbnail = false,
   ) =>
     request<MakerworldImportResponse>('/makerworld/import', {
       method: 'POST',
@@ -4795,6 +4796,7 @@ export const api = {
         folder_id: folder_id ?? null,
         archive_details,
         archive_image_count,
+        use_cover_as_thumbnail,
       }),
     }),
   getCloudSettingDetail: (settingId: string) =>

@@ -5569,6 +5569,8 @@ export default {
     importToLibrary: 'Enregistrer',
     archiveDetails: 'Archiver les détails MakerWorld',
     archiveDetailsDescription: 'Enregistrer localement la description et l’image de couverture avec le fichier importé.',
+    useCoverAsThumbnail: 'Utiliser la couverture MakerWorld comme miniature de bibliothèque',
+    useCoverAsThumbnailDescription: 'Utilise l’image de couverture MakerWorld archivée localement comme miniature de bibliothèque pour ce fichier.',
     archivePartialWarning: 'Le modèle a été enregistré, mais certaines images MakerWorld n’ont pas pu être archivées.',
     archiveFailedWarning: 'Le modèle a été enregistré, mais ses détails MakerWorld n’ont pas pu être archivés.',
     sliceIn: 'Enregistrer et découper dans {{slicer}}',

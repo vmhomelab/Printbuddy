@@ -5580,6 +5580,8 @@ export default {
     importToLibrary: '保存',
     archiveDetails: 'MakerWorld の詳細をアーカイブ',
     archiveDetailsDescription: 'モデルの説明とカバー画像をインポートしたファイルと一緒にローカル保存します。',
+    useCoverAsThumbnail: 'MakerWorld のカバーをライブラリのサムネイルに使用',
+    useCoverAsThumbnailDescription: 'ローカルにアーカイブした MakerWorld のカバー画像を、このファイルのライブラリサムネイルに使用します。',
     archivePartialWarning: 'モデルは保存されましたが、一部の MakerWorld 画像をアーカイブできませんでした。',
     archiveFailedWarning: 'モデルは保存されましたが、MakerWorld の詳細をアーカイブできませんでした。',
     sliceIn: '保存して {{slicer}} でスライス',

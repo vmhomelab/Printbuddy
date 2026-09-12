@@ -30,6 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.app.api.routes.cloud import get_stored_token
 from backend.app.api.routes.library import (
     get_library_dir,
+    get_library_thumbnails_dir,
     save_3mf_bytes_to_library,
     to_absolute_path,
     to_relative_path,
@@ -188,6 +189,70 @@ async def _write_source_snapshot(
     return to_relative_path(final_path), len(stored_images), warning
 
 
+def _promote_archived_cover_to_thumbnail(row: LibraryFile, snapshot_path: str) -> tuple[str | None, str]:
+    """Copy the validated snapshot cover into managed thumbnail storage.
+
+    Returns the previous thumbnail path only after the new local thumbnail is
+    safely written. Callers delete that previous managed file only after the DB
+    transaction commits.
+    """
+    source_path = to_absolute_path(snapshot_path)
+    snapshots_root = (get_library_dir() / "source-snapshots").resolve()
+    if source_path is None or not source_path.resolve().is_relative_to(snapshots_root):
+        raise ValueError("Source snapshot is outside managed storage")
+
+    with zipfile.ZipFile(source_path) as archive:
+        manifest = json.loads(archive.read("snapshot.json"))
+        images = manifest.get("images") if isinstance(manifest, dict) else None
+        if not isinstance(images, list):
+            raise ValueError("Source snapshot has no image manifest")
+        cover = next(
+            (
+                image.get("name")
+                for image in images
+                if isinstance(image, dict) and image.get("role") == "cover" and isinstance(image.get("name"), str)
+            ),
+            None,
+        )
+        if not cover:
+            raise ValueError("Source snapshot has no cover image")
+        cover_path = Path(cover)
+        allowed_extensions = {".png", ".jpg", ".gif", ".webp", ".bmp"}
+        if cover_path.name != cover or cover_path.suffix.lower() not in allowed_extensions:
+            raise ValueError("Source snapshot cover name is unsafe")
+        member = archive.getinfo(cover)
+        if member.file_size <= 0 or member.file_size > 10 * 1024 * 1024:
+            raise ValueError("Source snapshot cover has an invalid size")
+        payload = archive.read(member)
+
+    thumbnails_dir = get_library_thumbnails_dir()
+    target_path = thumbnails_dir / f"{uuid.uuid4().hex}{cover_path.suffix.lower()}"
+    fd, temp_name = tempfile.mkstemp(prefix=".makerworld-cover-", suffix=".tmp", dir=thumbnails_dir)
+    os.close(fd)
+    temp_path = Path(temp_name)
+    try:
+        temp_path.write_bytes(payload)
+        temp_path.replace(target_path)
+    finally:
+        temp_path.unlink(missing_ok=True)
+
+    previous_thumbnail = row.thumbnail_path
+    row.thumbnail_path = to_relative_path(target_path)
+    return previous_thumbnail, row.thumbnail_path
+
+
+def _discard_managed_thumbnail(relative_path: str | None) -> None:
+    if not relative_path:
+        return
+    try:
+        path = to_absolute_path(relative_path)
+        thumbnails_root = get_library_thumbnails_dir().resolve()
+        if path is not None and path.resolve().is_relative_to(thumbnails_root):
+            path.unlink(missing_ok=True)
+    except (OSError, ValueError) as exc:
+        logger.warning("Could not clean up replaced MakerWorld thumbnail: %s", exc)
+
+
 def _discard_source_snapshot(relative_path: str | None) -> None:
     """Remove an unattached snapshot, but only from the managed directory."""
     if not relative_path:
@@ -211,10 +276,13 @@ async def _attach_source_snapshot(
     profile_id: int,
     source_url: str,
     image_count: int,
+    use_cover_as_thumbnail: bool = False,
 ) -> MakerWorldSourceArchiveResult:
     """Best-effort snapshot creation without changing import success semantics."""
     row_id = row.id
     snapshot_path: str | None = None
+    previous_thumbnail: str | None = None
+    promoted_thumbnail: str | None = None
     try:
         snapshot_path, saved_images, warning = await _write_source_snapshot(
             service,
@@ -225,11 +293,22 @@ async def _attach_source_snapshot(
             image_count=image_count,
         )
         row.source_snapshot_path = snapshot_path
+        if use_cover_as_thumbnail:
+            try:
+                previous_thumbnail, promoted_thumbnail = _promote_archived_cover_to_thumbnail(row, snapshot_path)
+            except Exception as exc:  # noqa: BLE001 — thumbnail preference is best-effort
+                logger.warning("MakerWorld cover thumbnail could not be promoted for library file %s: %s", row_id, exc)
+                warning = (
+                    warning
+                    or "MakerWorld details were archived, but the cover could not replace the library thumbnail."
+                )
         await db.commit()
+        _discard_managed_thumbnail(previous_thumbnail)
         return MakerWorldSourceArchiveResult(saved=True, image_count=saved_images, warning=warning)
     except Exception as exc:  # noqa: BLE001 — source archival is deliberately best-effort
         await db.rollback()
         _discard_source_snapshot(snapshot_path)
+        _discard_managed_thumbnail(promoted_thumbnail)
         logger.warning("MakerWorld source snapshot failed for library file %s: %s", row_id, exc)
         return MakerWorldSourceArchiveResult(
             saved=False,
@@ -551,7 +630,25 @@ async def import_instance(
                 source_archive: MakerWorldSourceArchiveResult | None = None
                 if body.archive_details:
                     if existing_row.source_snapshot_path:
-                        source_archive = MakerWorldSourceArchiveResult(saved=True)
+                        warning = None
+                        if body.use_cover_as_thumbnail:
+                            promoted_thumbnail = None
+                            try:
+                                previous_thumbnail, promoted_thumbnail = _promote_archived_cover_to_thumbnail(
+                                    existing_row, existing_row.source_snapshot_path
+                                )
+                                await db.commit()
+                                _discard_managed_thumbnail(previous_thumbnail)
+                            except Exception as exc:  # noqa: BLE001 — existing archive remains usable
+                                await db.rollback()
+                                _discard_managed_thumbnail(promoted_thumbnail)
+                                logger.warning(
+                                    "MakerWorld archived cover could not replace thumbnail for library file %s: %s",
+                                    existing_row.id,
+                                    exc,
+                                )
+                                warning = "MakerWorld details are archived, but the cover could not replace the library thumbnail."
+                        source_archive = MakerWorldSourceArchiveResult(saved=True, warning=warning)
                     else:
                         source_archive = await _attach_source_snapshot(
                             db,
@@ -562,6 +659,7 @@ async def import_instance(
                             profile_id=profile_id,
                             source_url=source_url,
                             image_count=body.archive_image_count,
+                            use_cover_as_thumbnail=body.use_cover_as_thumbnail,
                         )
                 return response.model_copy(update={"source_archive": source_archive})
 
@@ -607,6 +705,7 @@ async def import_instance(
                 profile_id=profile_id,
                 source_url=source_url,
                 image_count=body.archive_image_count,
+                use_cover_as_thumbnail=body.use_cover_as_thumbnail,
             )
 
         return response.model_copy(update={"source_archive": source_archive})

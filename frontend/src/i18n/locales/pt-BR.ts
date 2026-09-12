@@ -5568,6 +5568,8 @@ export default {
     importToLibrary: 'Salvar',
     archiveDetails: 'Arquivar detalhes do MakerWorld',
     archiveDetailsDescription: 'Salvar localmente a descrição e a imagem de capa com o arquivo importado.',
+    useCoverAsThumbnail: 'Usar capa do MakerWorld como miniatura da biblioteca',
+    useCoverAsThumbnailDescription: 'Usa a imagem de capa do MakerWorld arquivada localmente como miniatura da biblioteca deste arquivo.',
     archivePartialWarning: 'O modelo foi salvo, mas algumas imagens do MakerWorld não puderam ser arquivadas.',
     archiveFailedWarning: 'O modelo foi salvo, mas os detalhes do MakerWorld não puderam ser arquivados.',
     sliceIn: 'Salvar e fatiar no {{slicer}}',
