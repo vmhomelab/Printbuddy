@@ -703,6 +703,121 @@ async def test_concurrent_recovery_serializes_missing_activity_creation():
 
 
 @pytest.mark.asyncio
+async def test_keepalive_does_not_create_a_second_activity_while_progress_recovery_is_creating_one():
+    """Keepalive and progress recovery must share the provider/printer creation lock."""
+
+    class FakeProvider:
+        id = 2
+        printer_id = None
+
+    class FakePrinter:
+        id = 4
+        name = "Workshop P1S"
+        is_active = True
+
+    class FakeScalars:
+        def all(self):
+            return [FakePrinter()]
+
+    class FakeDb:
+        commits = 0
+        rollbacks = 0
+
+        async def scalars(self, _statement):
+            return FakeScalars()
+
+        async def commit(self):
+            self.commits += 1
+
+        async def rollback(self):
+            self.rollbacks += 1
+
+    class RaceService(NotifyLiveActivityService):
+        def __init__(self, *, client):
+            super().__init__(client_factory=lambda config: client)
+            self.created_activity = None
+
+        async def _enabled_notify_providers(self, db, printer_id):
+            return [(FakeProvider(), {"live_activities_enabled": True})]
+
+        async def _all_enabled_live_notify_providers(self, db):
+            return [(FakeProvider(), {"live_activities_enabled": True})]
+
+        def _printer_status(self, printer_id):
+            return type(
+                "State",
+                (),
+                {
+                    "connected": True,
+                    "state": "RUNNING",
+                    "subtask_name": "dragon.3mf",
+                    "subtask_id": "task-1",
+                    "progress": 1,
+                    "remaining_time": 5,
+                    "layer_num": 1,
+                    "total_layers": 100,
+                },
+            )()
+
+        async def _active_activity(self, db, provider_id, printer_id, *, subtask_id=None):
+            return self.created_activity
+
+        async def _create_activity(self, db, **kwargs):
+            self.created_activity = NotificationLiveActivity(
+                provider_id=kwargs["provider_id"],
+                printer_id=kwargs["printer_id"],
+                activity_id=kwargs["activity_id"],
+                subtask_id=kwargs["subtask_id"],
+                filename=kwargs["filename"],
+                state="active",
+                last_progress=float(kwargs["progress"]),
+                last_remaining_time=kwargs["remaining_time"],
+                last_layer_num=kwargs["layer_num"],
+                last_total_layers=kwargs["total_layers"],
+            )
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+    start_calls = 0
+
+    async def start_activity(payload):
+        nonlocal start_calls
+        start_calls += 1
+        if start_calls == 1:
+            started.set()
+            await release.wait()
+        return f"activity-{start_calls}"
+
+    client = AsyncMock()
+    client.start = AsyncMock(side_effect=start_activity)
+    service = RaceService(client=client)
+    db = FakeDb()
+
+    progress_task = asyncio.create_task(
+        service.on_print_progress(
+            db,
+            printer_id=4,
+            printer_name="Workshop P1S",
+            filename="dragon.3mf",
+            progress=1,
+            remaining_time=300,
+            subtask_id="task-1",
+            layer_num=1,
+            total_layers=100,
+        )
+    )
+    await started.wait()
+
+    keepalive_task = asyncio.create_task(service._ensure_running_printers_have_activities(db))
+    await asyncio.sleep(0)
+    release.set()
+    await asyncio.gather(progress_task, keepalive_task)
+
+    client.start.assert_awaited_once()
+    assert db.commits == 1
+
+
+@pytest.mark.asyncio
 async def test_print_progress_replaces_gone_activity(db_session, notify_provider):
     activity = NotificationLiveActivity(
         provider_id=notify_provider.id,

@@ -536,16 +536,20 @@ class NotifyLiveActivityService:
             for provider, config in providers:
                 if provider.printer_id is not None and provider.printer_id != printer_id:
                     continue
-                if await self._active_activity(db, provider.id, printer_id):
-                    continue
-                await self._start_from_state(
-                    db,
-                    provider=provider,
-                    config=config,
-                    printer_id=printer_id,
-                    printer_name=printer_name,
-                    state=state,
-                )
+                # Progress recovery can be creating this same activity while the
+                # keepalive loop runs. Share its lock and re-check after waiting
+                # so both recovery paths cannot call Notify.start().
+                async with self._activity_lock(provider.id, printer_id):
+                    if await self._active_activity(db, provider.id, printer_id):
+                        continue
+                    await self._start_from_state(
+                        db,
+                        provider=provider,
+                        config=config,
+                        printer_id=printer_id,
+                        printer_name=printer_name,
+                        state=state,
+                    )
 
     async def _start_from_state(
         self,
